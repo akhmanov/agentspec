@@ -1,0 +1,42 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".opencode/instructions/INSTRUCTIONS.md"
+  ],
+  "command": {
+    "explore": {
+      "description": "Explore a task before formal commitment or reopen the problem when assumptions break",
+      "template": "{file:commands/explore.md}\n\n{file:skills/workspace-explore/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "debate": {
+      "description": "Run a bounded advisory debate across internal subagents before asking the human to break a tie",
+      "agent": "debate-moderator",
+      "subtask": false,
+      "template": "{file:commands/debate.md}\n\n{file:skills/workspace-debate/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "spec": {
+      "description": "Commit to the chosen direction in a canonical spec before planning or implementation",
+      "template": "{file:commands/spec.md}\n\n{file:skills/workspace-spec/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "plan": {
+      "description": "Turn an approved planned-path spec into an execution plan with topology, dependencies, and checkpoints",
+      "template": "{file:commands/plan.md}\n\n{file:skills/workspace-planning/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "build": {
+      "description": "Execute approved work from either a direct-build spec or an approved plan while preserving workspace boundaries",
+      "template": "{file:commands/build.md}\n\n{file:skills/workspace-build/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "test": {
+      "description": "Verify at the right layer and bounce back into repair when checks fail",
+      "template": "{file:commands/test.md}\n\n{file:skills/workspace-test/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "review": {
+      "description": "Run a findings-first pre-integration review for the current lifecycle change set",
+      "template": "{file:commands/review.md}\n\n{file:skills/workspace-review/SKILL.md}\n\n$ARGUMENTS"
+    },
+    "ship": {
+      "description": "Prepare the integration path to merged state and close the workspace only after merged completion",
+      "template": "{file:commands/ship.md}\n\n{file:skills/workspace-ship/SKILL.md}\n\n$ARGUMENTS"
+    }
+  }
+}
