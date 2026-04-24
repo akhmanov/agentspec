@@ -10,9 +10,9 @@ import (
 
 func TestLoadParsesInlineAndPathResources(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
-	raw := []byte("sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    path: ./.aw/commands/explore.md\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug\n")
+	raw := []byte("sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -26,18 +26,18 @@ func TestLoadParsesInlineAndPathResources(t *testing.T) {
 		t.Fatalf("got inline %q, want %q", got, "Core rules\n")
 	}
 
-	if got := cfg.Commands["explore"].Path; got != "./.aw/commands/explore.md" {
-		t.Fatalf("got command path %q, want %q", got, "./.aw/commands/explore.md")
+	if got := cfg.Commands["explore"].Path; got != "./.agentspec/commands/explore.md" {
+		t.Fatalf("got command path %q, want %q", got, "./.agentspec/commands/explore.md")
 	}
 
-	if got := cfg.Skills["debug"].Path; got != "./.aw/skills/debug" {
-		t.Fatalf("got skill path %q, want %q", got, "./.aw/skills/debug")
+	if got := cfg.Skills["debug"].Path; got != "./.agentspec/skills/debug" {
+		t.Fatalf("got skill path %q, want %q", got, "./.agentspec/skills/debug")
 	}
 }
 
 func TestLoadRejectsMultipleSelectors(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections:\n  core:\n    inline: hi\n    path: ./core.md\ncommands: {}\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -56,7 +56,7 @@ func TestLoadRejectsMultipleSelectors(t *testing.T) {
 
 func TestLoadRejectsUnsupportedGitLabSelector(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections:\n  core:\n    gitlab:\n      repo: group/repo\n      ref: main\n      path: sections/core.md\ncommands: {}\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -75,7 +75,7 @@ func TestLoadRejectsUnsupportedGitLabSelector(t *testing.T) {
 
 func TestLoadAcceptsHTTPAndGitHubSelectors(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections:\n  core:\n    http: https://example.com/core.md\ncommands:\n  explore:\n    github:\n      repo: owner/repo\n      ref: main\n      path: commands/explore.md\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -98,7 +98,7 @@ func TestLoadAcceptsHTTPAndGitHubSelectors(t *testing.T) {
 
 func TestLoadRejectsNonHTTPSHTTPSelector(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections:\n  core:\n    http: http://example.com/core.md\ncommands: {}\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -117,7 +117,7 @@ func TestLoadRejectsNonHTTPSHTTPSelector(t *testing.T) {
 
 func TestLoadRejectsIncompleteGitHubSelector(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections: {}\ncommands:\n  explore:\n    github:\n      repo: owner/repo\n      ref: main\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -136,7 +136,7 @@ func TestLoadRejectsIncompleteGitHubSelector(t *testing.T) {
 
 func TestLoadRejectsUnsafeGitHubSelectorPath(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections: {}\ncommands:\n  explore:\n    github:\n      repo: owner/repo\n      ref: main\n      path: ../commands/explore.md\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -155,7 +155,7 @@ func TestLoadRejectsUnsafeGitHubSelectorPath(t *testing.T) {
 
 func TestLoadPreservesSectionOrder(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections:\n  first:\n    inline: one\n  second:\n    inline: two\ncommands: {}\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -175,7 +175,7 @@ func TestLoadPreservesSectionOrder(t *testing.T) {
 
 func TestLoadRejectsUnsafeResourceID(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aw.yaml")
+	path := filepath.Join(dir, "agentspec.yaml")
 
 	raw := []byte("sections: {}\ncommands:\n  ../explore:\n    inline: hi\nagents: {}\nskills: {}\n")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"aw/internal/model"
+	"agentspec/internal/model"
 )
 
 func TestPreviewReportsManagedCreatesWithoutWriting(t *testing.T) {
@@ -52,7 +52,7 @@ func TestPreviewReportsManagedCreatesWithoutWriting(t *testing.T) {
 		t.Fatalf("expected no section writes, got err %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".aw", "state", "opencode.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".agentspec", "state", "opencode.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected no state writes, got err %v", err)
 	}
 }
@@ -88,6 +88,38 @@ func TestPreviewReportsOwnershipConflictWithoutError(t *testing.T) {
 	}
 }
 
+func TestPreviewReportsConflictForForeignSectionMarkers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("<!-- foreign:section:start core -->\nCore rules\n<!-- foreign:section:end core -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	des := &model.Desired{
+		Sections: []model.Section{{
+			Path: "AGENTS.md",
+			ID:   "core",
+			Body: "Core rules\n",
+		}},
+	}
+
+	plan, err := Preview(dir, "opencode", des)
+	if err != nil {
+		t.Fatalf("preview desired state: %v", err)
+	}
+	if len(plan.Changes) != 0 {
+		t.Fatalf("got changes %#v, want none", plan.Changes)
+	}
+	if len(plan.Conflicts) != 1 {
+		t.Fatalf("got conflicts %#v", plan.Conflicts)
+	}
+	if plan.Conflicts[0].Path != "AGENTS.md#core" {
+		t.Fatalf("got conflict %#v", plan.Conflicts[0])
+	}
+	if !strings.Contains(plan.Conflicts[0].Reason, "foreign section file") {
+		t.Fatalf("got conflict %#v", plan.Conflicts[0])
+	}
+}
+
 func TestApplyWritesManagedFilesSectionsAndState(t *testing.T) {
 	dir := t.TempDir()
 	des := &model.Desired{
@@ -119,17 +151,17 @@ func TestApplyWritesManagedFilesSectionsAndState(t *testing.T) {
 		t.Fatalf("read AGENTS.md: %v", err)
 	}
 	text := string(agents)
-	if !strings.Contains(text, "<!-- aw:section:start core -->") {
+	if !strings.Contains(text, "<!-- agentspec:section:start core -->") {
 		t.Fatalf("missing section start marker in %q", text)
 	}
 	if !strings.Contains(text, "Core rules\n") {
 		t.Fatalf("missing section body in %q", text)
 	}
-	if !strings.Contains(text, "<!-- aw:section:end core -->") {
+	if !strings.Contains(text, "<!-- agentspec:section:end core -->") {
 		t.Fatalf("missing section end marker in %q", text)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".aw", "state", "opencode.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".agentspec", "state", "opencode.json")); err != nil {
 		t.Fatalf("stat state file: %v", err)
 	}
 }
@@ -155,6 +187,41 @@ func TestApplyRejectsForeignFileCollision(t *testing.T) {
 	err := Apply(dir, "opencode", des)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestApplyRejectsForeignSectionMarkersWithoutMutation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("<!-- foreign:section:start core -->\nCore rules\n<!-- foreign:section:end core -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	des := &model.Desired{
+		Sections: []model.Section{{
+			Path: "AGENTS.md",
+			ID:   "core",
+			Body: "Core rules\n",
+		}},
+	}
+
+	err := Apply(dir, "opencode", des)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "foreign section file") {
+		t.Fatalf("got error %q, want foreign section conflict", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read preserved AGENTS.md: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "<!-- foreign:section:start core -->") {
+		t.Fatalf("foreign marker unexpectedly changed in %q", text)
+	}
+	if strings.Contains(text, "<!-- agentspec:section:start core -->") {
+		t.Fatalf("unexpected agentspec marker in %q", text)
 	}
 }
 
@@ -199,11 +266,11 @@ func TestApplyRemovesOwnedOrphansAndPreservesForeignContent(t *testing.T) {
 
 func TestApplyRejectsForeignStateFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".aw", "state")
+	path := filepath.Join(dir, ".agentspec", "state")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"other"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"other","version":3,"files":[],"sections":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,18 +334,18 @@ func TestApplyDoesNotMutateWhenPreflightFails(t *testing.T) {
 		t.Fatalf("read preserved AGENTS.md: %v", err)
 	}
 	text := string(agents)
-	if !strings.Contains(text, "<!-- aw:section:start core -->") {
+	if !strings.Contains(text, "<!-- agentspec:section:start core -->") {
 		t.Fatalf("lost preserved section in %q", text)
 	}
 }
 
 func TestApplyRejectsTamperedStateFilePath(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".aw", "state")
+	path := filepath.Join(dir, ".agentspec", "state")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"aw","version":2,"files":[{"path":"../../outside","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"agentspec","version":3,"files":[{"path":"../../outside","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,11 +360,11 @@ func TestApplyRejectsTamperedStateFilePath(t *testing.T) {
 
 func TestApplyRejectsTamperedStateSectionPath(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".aw", "state")
+	path := filepath.Join(dir, ".agentspec", "state")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"aw","version":2,"files":[],"sections":[{"path":"CLAUDE.md","id":"core"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "opencode.json"), []byte(`{"owner":"agentspec","version":3,"files":[],"sections":[{"path":"CLAUDE.md","id":"core"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -315,13 +382,13 @@ func TestApplyRejectsTamperedManagedRootClaimOnPrune(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".opencode", "commands"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "state"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "state"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".opencode", "commands", "foreign.md"), []byte("foreign\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "state", "opencode.json"), []byte(`{"owner":"aw","version":2,"files":[{"path":".opencode/commands/foreign.md","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "state", "opencode.json"), []byte(`{"owner":"agentspec","version":3,"files":[{"path":".opencode/commands/foreign.md","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -347,13 +414,13 @@ func TestApplyRejectsTamperedManagedRootClaimOnOverwrite(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".opencode", "commands"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "state"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "state"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".opencode", "commands", "foreign.md"), []byte("foreign\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "state", "opencode.json"), []byte(`{"owner":"aw","version":2,"files":[{"path":".opencode/commands/foreign.md","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "state", "opencode.json"), []byte(`{"owner":"agentspec","version":3,"files":[{"path":".opencode/commands/foreign.md","hash":"`+strings.Repeat("a", 64)+`"}],"sections":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

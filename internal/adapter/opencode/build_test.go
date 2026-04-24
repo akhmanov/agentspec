@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"aw/internal/model"
+	"agentspec/internal/model"
 )
 
 func TestBuildRendersOpenCodePaths(t *testing.T) {

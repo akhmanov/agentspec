@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"aw/internal/config"
-	"aw/internal/model"
+	"agentspec/internal/config"
+	"agentspec/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,21 +58,13 @@ func newRemoteLoader(client httpDoer) *remoteLoader {
 	return &remoteLoader{
 		client:               client,
 		maxBytes:             defaultMaxBytes,
-		githubRawBaseURL:     envOr("AW_GITHUB_RAW_BASE_URL", "https://raw.githubusercontent.com"),
-		githubArchiveBaseURL: envOr("AW_GITHUB_ARCHIVE_BASE_URL", "https://codeload.github.com"),
+		githubRawBaseURL:     "https://raw.githubusercontent.com",
+		githubArchiveBaseURL: "https://codeload.github.com",
 	}
 }
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("fetch http %q: unexpected status %s", e.url, e.status)
-}
-
-func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-
-	return fallback
 }
 
 func (r *remoteLoader) fetchHTTP(addr string) ([]byte, error) {

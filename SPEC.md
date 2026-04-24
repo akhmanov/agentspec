@@ -1,4 +1,4 @@
-# AW Specification
+# AgentSpec Specification
 
 - Status: Draft
 - Revision: 2
@@ -6,9 +6,9 @@
 
 ## Summary
 
-`aw` is a small Go CLI that turns a single declarative `aw.yaml` file into an agent workspace surface for a supported target.
+`agentspec` is a small Go CLI that turns a single declarative `agentspec.yaml` file into an agent workspace surface for a supported target.
 
-In the current v1 slice, `aw` is a preview-and-apply sync tool only. It does not own workflow execution, task tracking, project bootstrap, package installation, or runtime orchestration.
+In the current v1 slice, `agentspec` is a preview-and-apply sync tool only. It does not own workflow execution, task tracking, project bootstrap, package installation, or runtime orchestration.
 
 ## Problem
 
@@ -24,15 +24,15 @@ This process is slow, error-prone, and hard to reproduce. Small changes to works
 
 ## Goal
 
-Provide one declarative file, `aw.yaml`, plus a small CLI that can materialize a workspace surface safely and repeatably.
+Provide one declarative file, `agentspec.yaml`, plus a small CLI that can materialize a workspace surface safely and repeatably.
 
 Core user flow:
 
-1. Create `aw.yaml` with `aw init`.
-2. Describe the desired workspace resources in `aw.yaml`.
-3. Run `aw plan --opencode` to preview managed changes.
-4. Run `aw apply --opencode` to materialize those changes.
-5. Get a predictable, target-specific workspace surface with only `aw`-owned parts updated.
+1. Create `agentspec.yaml` with `agentspec init`.
+2. Describe the desired workspace resources in `agentspec.yaml`.
+3. Run `agentspec plan --opencode` to preview managed changes.
+4. Run `agentspec apply --opencode` to materialize those changes.
+5. Get a predictable, target-specific workspace surface with only `agentspec`-owned parts updated.
 
 ## Non-Goals
 
@@ -40,13 +40,13 @@ The following are explicitly out of scope for v1:
 
 - owning or defining a lifecycle framework
 - embedding or wrapping `beads`
-- adding `aw task`
+- adding `agentspec task`
 - requiring or generating `mise`
 - using `npx skills`
 - depending on `skills.sh`
 - acting as a project bootstrap tool
 - acting as a generic merge engine for arbitrary existing target files
-- auto-migrating an existing workspace into the `aw` model
+- auto-migrating an arbitrary existing workspace into the `agentspec` model
 - supporting packs as part of the initial v1 scope
 - supporting multi-file inline resources
 
@@ -57,11 +57,11 @@ The following are explicitly out of scope for v1:
 - Conservative ownership.
 - Target adapters render; schema stays mostly target-neutral.
 - Hidden magic is a bug.
-- Only `aw`-owned files and `aw` markers may be updated or deleted.
+- Only `agentspec`-owned files and `agentspec` markers may be updated or deleted.
 
 ## Product Shape
 
-`aw` is a declarative resource sync tool.
+`agentspec` is a declarative resource sync tool.
 
 It owns four top-level resource types in v1:
 
@@ -74,9 +74,9 @@ The first three are single-document resources. `skills` are the only special-cas
 
 ## CLI Surface
 
-### `aw init`
+### `agentspec init`
 
-Creates a starter `aw.yaml`.
+Creates a starter `agentspec.yaml`.
 
 Constraints:
 
@@ -84,13 +84,13 @@ Constraints:
 - no migration of an existing workspace
 - no side effects beyond writing the config file
 
-### `aw plan`
+### `agentspec plan`
 
 Previews the managed workspace changes for a supported target.
 
 Initial target flags:
 
-- `aw plan --opencode`
+- `agentspec plan --opencode`
 
 Constraints:
 
@@ -99,31 +99,31 @@ Constraints:
 - no silent rewriting of foreign files
 - surface ownership conflicts clearly
 
-### `aw apply`
+### `agentspec apply`
 
 Materializes the desired workspace state for a supported target.
 
 Initial target flags:
 
-- `aw apply --opencode`
+- `agentspec apply --opencode`
 
 Constraints:
 
 - target-specific rendering only
 - no silent rewriting of foreign files
-- delete only `aw`-owned orphaned files
-- update only `aw` markers inside instruction files
+- delete only `agentspec`-owned orphaned files
+- update only `agentspec` markers inside instruction files
 - recompute current desired state instead of consuming a saved plan artifact
 
 ### Deferred CLI Surface
 
 These are deferred from v1 and are not required by this spec:
 
-- `aw check`
-- `aw doctor`
+- `agentspec check`
+- `agentspec doctor`
 - any pack-specific commands
 
-## `aw.yaml` Schema
+## `agentspec.yaml` Schema
 
 ### Top-Level Shape
 
@@ -146,7 +146,7 @@ sections:
 
 commands:
   explore:
-    path: ./.aw/commands/explore.md
+    path: ./.agentspec/commands/explore.md
 
 agents:
   reality-checker:
@@ -180,7 +180,7 @@ Deferred selectors:
 
 ### `inline`
 
-Inline content embedded directly in `aw.yaml`.
+Inline content embedded directly in `agentspec.yaml`.
 
 ```yaml
 sections:
@@ -259,7 +259,7 @@ sections:
       Core workspace rules...
 
   review-rules:
-    path: ./.aw/sections/review-rules.md
+    path: ./.agentspec/sections/review-rules.md
 ```
 
 Important behavior:
@@ -288,7 +288,7 @@ commands:
       Explore the task before formal commitment...
 
   review:
-    path: ./.aw/commands/review.md
+    path: ./.agentspec/commands/review.md
 ```
 
 Important behavior:
@@ -357,7 +357,7 @@ skills:
     http: https://example.com/skills/release-check/SKILL.md
 
   systematic-debugging:
-    path: ./.aw/skills/systematic-debugging
+    path: ./.agentspec/skills/systematic-debugging
 
   frontend-design:
     github:
@@ -406,7 +406,7 @@ When future target work is added, it should:
 
 Adapters own instruction-file placement.
 
-`aw.yaml` does not mention `AGENTS.md`, `CLAUDE.md`, or any other instruction filename directly.
+`agentspec.yaml` does not mention `AGENTS.md`, `CLAUDE.md`, or any other instruction filename directly.
 
 Instead:
 
@@ -416,53 +416,54 @@ Instead:
 
 ### Marker Format
 
-Simple `aw` markers:
+Simple `agentspec` markers:
 
 ```md
-<!-- aw:section:start workspace-core -->
+<!-- agentspec:section:start workspace-core -->
 ...content...
-<!-- aw:section:end workspace-core -->
+<!-- agentspec:section:end workspace-core -->
 ```
 
 Rules:
 
 - one managed block per section
 - preserve YAML order
-- update only content inside `aw` markers
-- never rewrite content outside `aw` markers
+- update only content inside `agentspec` markers
+- never rewrite content outside `agentspec` markers
 
 ## Ownership Model
 
-`aw` may only modify things it owns.
+`agentspec` may only modify things it owns.
 
-### `aw`-Owned Files
+### `agentspec`-Owned Files
 
 Examples:
 
 - materialized `.opencode/commands/*.md`
 - materialized `.opencode/agents/*.md`
 - materialized `.agents/skills/<id>/...`
+- persisted `.agentspec/state/<target>.json`
 
 Ownership policy:
 
-- create and update only `aw`-owned files
-- delete only orphaned `aw`-owned files
+- create and update only `agentspec`-owned files
+- delete only orphaned `agentspec`-owned files
 - do not claim pre-existing foreign files just because a path matches
 
-### `aw`-Managed Regions
+### `agentspec`-Managed Regions
 
 In instruction files, ownership is marker-scoped.
 
 Policy:
 
-- only content inside `aw` markers is managed
+- only content inside `agentspec` markers is managed
 - everything outside those markers is foreign content
 
 ## Orphan Deletion Policy
 
-If a resource is removed from `aw.yaml`:
+If a resource is removed from `agentspec.yaml`:
 
-- delete the corresponding orphaned `aw`-owned file(s)
+- delete the corresponding orphaned `agentspec`-owned file(s)
 - remove the corresponding orphaned managed section block
 
 Do not delete:
@@ -476,42 +477,42 @@ v1 uses conservative adoption.
 
 Meaning:
 
-- `aw` works alongside an existing workspace
-- it does not try to auto-normalize or import every existing file into schema
+- `agentspec` works alongside an existing workspace
+- it does not try to auto-normalize or import arbitrary existing files into schema
 - it only manages what it explicitly owns
 
 This avoids accidental takeover of hand-maintained workspaces.
 
 ## Plan And Apply Semantics
 
-`aw plan` should conceptually perform these steps:
+`agentspec plan` should conceptually perform these steps:
 
-1. Load and validate `aw.yaml`.
+1. Load and validate `agentspec.yaml`.
 2. Resolve each resource from its selected source.
 3. Normalize resources into internal resolved forms.
 4. Ask the target adapter to build desired output.
 5. Compare desired output against the current workspace.
 6. Report managed creates, updates, deletes, and ownership conflicts without writing files or state.
 
-`aw apply` should conceptually perform these steps:
+`agentspec apply` should conceptually perform these steps:
 
-1. Load and validate `aw.yaml`.
+1. Load and validate `agentspec.yaml`.
 2. Resolve each resource from its selected source.
 3. Normalize resources into internal resolved forms.
 4. Ask the target adapter to build desired output.
-5. Apply file updates for `aw`-owned files.
-6. Apply section updates inside `aw` markers.
-7. Remove orphaned `aw`-owned outputs.
+5. Apply file updates for `agentspec`-owned files.
+6. Apply section updates inside `agentspec` markers.
+7. Remove orphaned `agentspec`-owned outputs.
 8. Persist owned state if needed for safe future apply and prune behavior.
 
-`aw apply` recomputes desired state from current config and current sources instead of consuming output from a previous `aw plan` run.
+`agentspec apply` recomputes desired state from current config and current sources instead of consuming output from a previous `agentspec plan` run.
 
 ## Internal Architecture
 
 Expected layers:
 
 - `config`
-  - parse and validate `aw.yaml`
+  - parse and validate `agentspec.yaml`
 - `resolve`
   - inline/path/http/github
 - `model`
@@ -521,8 +522,8 @@ Expected layers:
 - `sync`
   - apply desired state and orphan cleanup
 - `state`
-  - track `aw`-owned outputs if needed
-- `cmd/aw`
+  - track `agentspec`-owned outputs if needed
+- `cmd/agentspec`
   - CLI transport
 
 Key boundary:
@@ -534,11 +535,11 @@ Key boundary:
 
 v1 is successful when:
 
-- a developer can describe a workspace using one `aw.yaml`
-- `aw plan --opencode` can safely preview managed changes without writing files or state
-- `aw apply --opencode` can safely materialize the agreed resources
-- only `aw`-owned files are updated or deleted
-- only `aw` markers are modified in instruction files
+- a developer can describe a workspace using one `agentspec.yaml`
+- `agentspec plan --opencode` can safely preview managed changes without writing files or state
+- `agentspec apply --opencode` can safely materialize the agreed resources
+- only `agentspec`-owned files are updated or deleted
+- only `agentspec` markers are modified in instruction files
 - the resulting schema stays readable without hidden modes or a mini DSL
 
 ## Deferred Questions
@@ -546,8 +547,8 @@ v1 is successful when:
 These are intentionally deferred and not required for v1:
 
 - packs
-- `aw check`
-- `aw doctor`
+- `agentspec check`
+- `agentspec doctor`
 - richer metadata for commands or agents outside markdown
 - target filters on sections
 - one big managed instruction region instead of per-section blocks
@@ -560,4 +561,4 @@ These are intentionally deferred and not required for v1:
 
 This direction is worth doing because it captures the repeatable value in a workspace setup without taking ownership of runtime or workflow policy.
 
-It keeps the schema small, makes target-specific behavior explicit, and gives `aw` a narrow, high-confidence responsibility: turn declarative workspace resources into a safe, reproducible target surface.
+It keeps the schema small, makes target-specific behavior explicit, and gives `agentspec` a narrow, high-confidence responsibility: turn declarative workspace resources into a safe, reproducible target surface.
