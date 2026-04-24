@@ -41,7 +41,7 @@ The following are explicitly out of scope for v1:
 - owning or defining a lifecycle framework
 - embedding or wrapping `beads`
 - adding `aw task`
-- requiring or generating `mise`
+- requiring or generating external environment-manager configuration
 - using `npx skills`
 - depending on `skills.sh`
 - acting as a project bootstrap tool

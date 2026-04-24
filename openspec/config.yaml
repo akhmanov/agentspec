@@ -1,0 +1,31 @@
+schema: aw-openspec-beads
+
+context: |
+  Repository: aw
+  Product boundary: aw is a declarative workspace sync tool, not a workflow runtime.
+  Workflow stack: OpenSpec + Beads.
+  Authority split:
+    - OpenSpec owns change, spec, design, and execution-checklist artifacts.
+    - beads owns task identity, status, assignee, priority, dependencies, and continuity.
+  Legacy history:
+    - docs/specs/ and docs/plans/ remain readable history, not the canonical source for new work.
+  OpenCode workflow surface:
+    - Use the repo-generated core workflow set plus the repo-local opsx-continue supplement: opsx-explore, opsx-propose, opsx-continue, opsx-apply, opsx-archive.
+    - Validation is still required before review/integration via explicit CLI usage such as openspec validate <change-name> --type change.
+  Mapping contract:
+    - Each OpenSpec change maps to exactly one bead.
+    - Change directory names must be prefixed with the bead id.
+    - Repeat the bead id in generated artifacts when the template asks for traceability.
+
+rules:
+  proposal:
+    - Start with a Traceability section that names the bead id parsed from the change name prefix.
+    - Keep the proposal concise and note whether this work replaces, bridges, or leaves alone any legacy workflow history.
+  specs:
+    - Describe externally visible behavior only; keep implementation detail in design or tasks.
+  design:
+    - Explain how the change preserves the OpenSpec and beads authority split.
+    - Include any cutover or bridge steps required for active work.
+  tasks:
+    - State explicitly that tasks.md is an execution checklist and beads remains the authoritative task manager.
+    - Keep tasks dependency-ordered and small enough for one focused session.
