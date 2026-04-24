@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"os"
 
-	adapter "aw/internal/adapter/opencode"
-	"aw/internal/config"
-	"aw/internal/model"
-	"aw/internal/resolve"
-	awsync "aw/internal/sync"
+	adapter "agentspec/internal/adapter/opencode"
+	"agentspec/internal/config"
+	"agentspec/internal/model"
+	"agentspec/internal/resolve"
+	awsync "agentspec/internal/sync"
 	"github.com/urfave/cli/v3"
 )
+
+const defaultConfigPath = "agentspec.yaml"
 
 func main() {
 	if err := newCommand().Run(context.Background(), os.Args); err != nil {
@@ -22,14 +24,14 @@ func main() {
 
 func newCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "aw",
-		Usage: "materialize workspace resources from aw.yaml",
+		Name:  "agentspec",
+		Usage: "materialize workspace resources from agentspec.yaml",
 		Commands: []*cli.Command{
 			{
 				Name:  "init",
-				Usage: "write a starter aw.yaml",
+				Usage: "write a starter agentspec.yaml",
 				Action: func(context.Context, *cli.Command) error {
-					return config.WriteStarter("aw.yaml")
+					return config.WriteStarter(defaultConfigPath)
 				},
 			},
 			{
@@ -104,7 +106,7 @@ func loadDesired(target string) (string, *model.Desired, error) {
 		return "", nil, err
 	}
 
-	cfg, err := config.Load("aw.yaml")
+	cfg, err := config.Load(defaultConfigPath)
 	if err != nil {
 		return "", nil, err
 	}

@@ -11,8 +11,22 @@ import (
 	"strings"
 	"testing"
 
-	"aw/internal/config"
+	"agentspec/internal/config"
 )
+
+func TestNewRemoteLoaderIgnoresGitHubBaseURLEnvVars(t *testing.T) {
+	t.Setenv("AGENTSPEC_GITHUB_RAW_BASE_URL", "https://example.invalid/raw")
+	t.Setenv("AGENTSPEC_GITHUB_ARCHIVE_BASE_URL", "https://example.invalid/archive")
+
+	loader := newRemoteLoader(nil)
+
+	if loader.githubRawBaseURL != "https://raw.githubusercontent.com" {
+		t.Fatalf("got github raw base url %q", loader.githubRawBaseURL)
+	}
+	if loader.githubArchiveBaseURL != "https://codeload.github.com" {
+		t.Fatalf("got github archive base url %q", loader.githubArchiveBaseURL)
+	}
+}
 
 func TestResolveLoadsHTTPDocumentsAndSkill(t *testing.T) {
 	server := newRemoteTestServer(t, map[string]string{
@@ -310,22 +324,22 @@ func TestRemoteLoaderFetchHTTPRejectsOversizedBody(t *testing.T) {
 
 func TestResolveLoadsInlinePathAndSingleFileSkill(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "commands"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "commands"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "skills"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "commands", "explore.md"), []byte("Explore\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "skills", "debug.md"), []byte("---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    path: ./.aw/commands/explore.md\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug.md\n")
-	path := filepath.Join(dir, "aw.yaml")
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "commands", "explore.md"), []byte("Explore\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "skills", "debug.md"), []byte("---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte("sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug.md\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +377,7 @@ func TestResolveLoadsInlinePathAndSingleFileSkill(t *testing.T) {
 
 func TestResolveLoadsDirectorySkillBundle(t *testing.T) {
 	dir := t.TempDir()
-	skill := filepath.Join(dir, ".aw", "skills", "debug")
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
 	if err := os.MkdirAll(filepath.Join(skill, "notes"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -375,8 +389,8 @@ func TestResolveLoadsDirectorySkillBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +420,7 @@ func TestResolveLoadsDirectorySkillBundle(t *testing.T) {
 
 func TestResolveRejectsDirectorySkillWithoutRootSkillFile(t *testing.T) {
 	dir := t.TempDir()
-	skill := filepath.Join(dir, ".aw", "skills", "debug")
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
 	if err := os.MkdirAll(skill, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -414,8 +428,8 @@ func TestResolveRejectsDirectorySkillWithoutRootSkillFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -437,15 +451,15 @@ func TestResolveRejectsDirectorySkillWithoutRootSkillFile(t *testing.T) {
 
 func TestResolveRejectsInvalidSingleFileSkill(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "skills"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "skills", "debug.md"), []byte("not a skill\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "skills", "debug.md"), []byte("not a skill\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug.md\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug.md\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +481,7 @@ func TestResolveRejectsInvalidSingleFileSkill(t *testing.T) {
 
 func TestResolveRejectsInvalidBundleRootSkill(t *testing.T) {
 	dir := t.TempDir()
-	skill := filepath.Join(dir, ".aw", "skills", "debug")
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
 	if err := os.MkdirAll(skill, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -475,8 +489,8 @@ func TestResolveRejectsInvalidBundleRootSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -498,16 +512,16 @@ func TestResolveRejectsInvalidBundleRootSkill(t *testing.T) {
 
 func TestResolveAcceptsCRLFSingleFileSkill(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".aw", "skills"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := "---\r\nname: debug\r\ndescription: Debug skill\r\n---\r\n\r\n# Debug\r\n"
-	if err := os.WriteFile(filepath.Join(dir, ".aw", "skills", "debug.md"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "skills", "debug.md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug.md\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug.md\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +542,7 @@ func TestResolveAcceptsCRLFSingleFileSkill(t *testing.T) {
 
 func TestResolveAcceptsCRLFBundleRootSkill(t *testing.T) {
 	dir := t.TempDir()
-	skill := filepath.Join(dir, ".aw", "skills", "debug")
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
 	if err := os.MkdirAll(skill, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -537,8 +551,8 @@ func TestResolveAcceptsCRLFBundleRootSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.aw/skills/debug\n")
-	path := filepath.Join(dir, "aw.yaml")
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}

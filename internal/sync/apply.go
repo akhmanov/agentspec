@@ -10,11 +10,18 @@ import (
 	"regexp"
 	"strings"
 
-	"aw/internal/model"
+	"agentspec/internal/model"
 )
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 var validHash = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+const (
+	currentOwner         = "agentspec"
+	currentStateVersion  = 3
+	currentStateDirName  = ".agentspec"
+	currentSectionPrefix = "agentspec"
+)
 
 type state struct {
 	Owner    string         `json:"owner"`
@@ -96,7 +103,7 @@ func Apply(root, target string, des *model.Desired) error {
 		return err
 	}
 
-	st := state{Owner: "aw", Version: 2}
+	st := state{Owner: currentOwner, Version: currentStateVersion}
 	for _, file := range des.Files {
 		st.Files = append(st.Files, fileState{Path: file.Path, Hash: hashText(file.Body)})
 	}
@@ -104,7 +111,11 @@ func Apply(root, target string, des *model.Desired) error {
 		st.Sections = append(st.Sections, sectionState{Path: section.Path, ID: section.ID})
 	}
 
-	return saveState(root, target, st)
+	if err := saveState(root, target, st); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func Preview(root, target string, des *model.Desired) (*Plan, error) {
@@ -203,13 +214,17 @@ func inspectSections(root string, prev state, des *model.Desired, plan *Plan) er
 		}
 
 		before := string(raw)
+		if hasForeignSectionMarker(before, section.ID) {
+			plan.Conflicts = append(plan.Conflicts, Conflict{Path: sectionKey(section.Path, section.ID), Reason: "refusing to overwrite foreign section file"})
+			continue
+		}
 		after := upsertSection(before, section)
 		if before == after {
 			continue
 		}
 
 		kind := Create
-		if strings.Contains(before, sectionStart(section.ID)) {
+		if hasManagedSection(before, section.ID) {
 			kind = Update
 		}
 		plan.Changes = append(plan.Changes, Change{Kind: kind, Path: sectionKey(section.Path, section.ID)})
@@ -250,25 +265,9 @@ func loadState(root, target string) (state, error) {
 		return state{}, fmt.Errorf("read state: %w", err)
 	}
 
-	var st state
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return state{}, fmt.Errorf("parse state: %w", err)
-	}
-	if st.Owner != "aw" || st.Version != 2 {
-		return state{}, fmt.Errorf("foreign state file at %q", path)
-	}
-	for _, file := range st.Files {
-		if !validStateFile(file.Path) {
-			return state{}, fmt.Errorf("invalid state file path %q", file.Path)
-		}
-		if !validHash.MatchString(file.Hash) {
-			return state{}, fmt.Errorf("invalid state file hash for %q", file.Path)
-		}
-	}
-	for _, section := range st.Sections {
-		if !validStateSection(section) {
-			return state{}, fmt.Errorf("invalid state section path %q", section.Path)
-		}
+	st, err := parseState(path, raw, currentOwner, currentStateVersion)
+	if err != nil {
+		return state{}, err
 	}
 
 	return st, nil
@@ -293,7 +292,32 @@ func saveState(root, target string, st state) error {
 }
 
 func statePath(root, target string) string {
-	return filepath.Join(root, ".aw", "state", target+".json")
+	return filepath.Join(root, currentStateDirName, "state", target+".json")
+}
+
+func parseState(path string, raw []byte, owner string, version int) (state, error) {
+	var st state
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return state{}, fmt.Errorf("parse state: %w", err)
+	}
+	if st.Owner != owner || st.Version != version {
+		return state{}, fmt.Errorf("foreign state file at %q", path)
+	}
+	for _, file := range st.Files {
+		if !validStateFile(file.Path) {
+			return state{}, fmt.Errorf("invalid state file path %q", file.Path)
+		}
+		if !validHash.MatchString(file.Hash) {
+			return state{}, fmt.Errorf("invalid state file hash for %q", file.Path)
+		}
+	}
+	for _, section := range st.Sections {
+		if !validStateSection(section) {
+			return state{}, fmt.Errorf("invalid state section path %q", section.Path)
+		}
+	}
+
+	return st, nil
 }
 
 func upsertSection(raw string, section model.Section) string {
@@ -301,14 +325,9 @@ func upsertSection(raw string, section model.Section) string {
 	end := sectionEnd(section.ID)
 	block := start + "\n" + section.Body + end + "\n"
 
-	i := strings.Index(raw, start)
-	j := strings.Index(raw, end)
-	if i >= 0 && j >= 0 && j >= i {
-		j += len(end)
-		if j < len(raw) && raw[j] == '\n' {
-			j++
-		}
-		return raw[:i] + block + raw[j:]
+	out, ok := replaceManagedSection(raw, start, end, block)
+	if ok {
+		return out
 	}
 
 	if raw == "" {
@@ -318,6 +337,21 @@ func upsertSection(raw string, section model.Section) string {
 		raw += "\n"
 	}
 	return raw + "\n" + block
+}
+
+func replaceManagedSection(raw, start, end, block string) (string, bool) {
+	i := strings.Index(raw, start)
+	j := strings.Index(raw, end)
+	if i < 0 || j < 0 || j < i {
+		return raw, false
+	}
+
+	j += len(end)
+	if j < len(raw) && raw[j] == '\n' {
+		j++
+	}
+
+	return raw[:i] + block + raw[j:], true
 }
 
 func owned(files []fileState, path string) (fileState, bool) {
@@ -389,13 +423,19 @@ func pruneSections(root string, prev []sectionState, next []model.Section) error
 }
 
 func removeSection(raw string, section sectionState) string {
-	start := sectionStart(section.ID)
-	end := sectionEnd(section.ID)
+	out, ok := removeManagedSection(raw, sectionStart(section.ID), sectionEnd(section.ID))
+	if ok {
+		return out
+	}
 
+	return raw
+}
+
+func removeManagedSection(raw, start, end string) (string, bool) {
 	i := strings.Index(raw, start)
 	j := strings.Index(raw, end)
 	if i < 0 || j < 0 || j < i {
-		return raw
+		return raw, false
 	}
 
 	j += len(end)
@@ -410,7 +450,7 @@ func removeSection(raw string, section sectionState) string {
 	if strings.HasSuffix(out, "\n\n") {
 		out = strings.TrimSuffix(out, "\n")
 	}
-	return out
+	return out, true
 }
 
 func pruneDirs(root, dir string) {
@@ -475,9 +515,28 @@ func sectionKey(path, id string) string {
 }
 
 func sectionStart(id string) string {
-	return "<!-- aw:section:start " + id + " -->"
+	return sectionMarker(currentSectionPrefix, "start", id)
 }
 
 func sectionEnd(id string) string {
-	return "<!-- aw:section:end " + id + " -->"
+	return sectionMarker(currentSectionPrefix, "end", id)
+}
+
+func sectionMarker(prefix, edge, id string) string {
+	return "<!-- " + prefix + ":section:" + edge + " " + id + " -->"
+}
+
+func hasManagedSection(raw, id string) bool {
+	return strings.Contains(raw, sectionStart(id))
+}
+
+func hasForeignSectionMarker(raw, id string) bool {
+	matches := regexp.MustCompile(`<!-- ([a-zA-Z0-9._-]+):section:start ` + regexp.QuoteMeta(id) + ` -->`).FindAllStringSubmatch(raw, -1)
+	for _, match := range matches {
+		if len(match) == 2 && match[1] != currentSectionPrefix {
+			return true
+		}
+	}
+
+	return false
 }

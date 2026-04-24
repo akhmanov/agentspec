@@ -1,6 +1,6 @@
 # Architecture
 
-`aw` is a small Go CLI that turns one declarative `aw.yaml` file into a target-specific workspace surface.
+`agentspec` is a small Go CLI that turns one declarative `agentspec.yaml` file into a target-specific workspace surface.
 
 This document defines the repo-level architecture contract for v1. It exists to keep the code simple, boundary-safe, and easy to extend without turning a small CLI into a framework.
 
@@ -23,12 +23,12 @@ This document defines the repo-level architecture contract for v1. It exists to 
 
 The expected package shape for the first slice is:
 
-- `cmd/aw`
+- `cmd/agentspec`
   - CLI transport only
   - process entrypoint
   - command wiring
 - `internal/config`
-  - parse and validate `aw.yaml`
+  - parse and validate `agentspec.yaml`
 - `internal/resolve`
   - resolve `inline` and `path`
   - later `http`, `github`, `gitlab`
@@ -43,7 +43,7 @@ The expected package shape for the first slice is:
 
 Dependencies must point inward.
 
-- `cmd/aw` may depend on `internal/config`, `internal/resolve`, `internal/model`, adapter packages, and `internal/sync`.
+- `cmd/agentspec` may depend on `internal/config`, `internal/resolve`, `internal/model`, adapter packages, and `internal/sync`.
 - `internal/config` must not depend on adapter or sync packages.
 - `internal/resolve` must not know target file layout.
 - adapters must not parse raw config or resolve selectors.
@@ -54,7 +54,7 @@ Dependencies must point inward.
 The intended execution flow is:
 
 1. CLI loads args and selects a command.
-2. Config layer loads and validates `aw.yaml`.
+2. Config layer loads and validates `agentspec.yaml`.
 3. Resolve layer resolves configured sources.
 4. Model layer holds normalized resolved resources.
 5. Target adapter renders desired outputs.
