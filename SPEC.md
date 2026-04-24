@@ -1,14 +1,14 @@
 # AW Specification
 
 - Status: Draft
-- Revision: 1
-- Supersedes: none
+- Revision: 2
+- Supersedes: Revision 1
 
 ## Summary
 
-`aw` is a small Go CLI that turns a single declarative `aw.yaml` file into an agent workspace surface for one or more targets.
+`aw` is a small Go CLI that turns a single declarative `aw.yaml` file into an agent workspace surface for a supported target.
 
-In v1, `aw` is a sync tool only. It does not own workflow execution, task tracking, project bootstrap, package installation, or runtime orchestration.
+In the current v1 slice, `aw` is a preview-and-apply sync tool only. It does not own workflow execution, task tracking, project bootstrap, package installation, or runtime orchestration.
 
 ## Problem
 
@@ -30,8 +30,9 @@ Core user flow:
 
 1. Create `aw.yaml` with `aw init`.
 2. Describe the desired workspace resources in `aw.yaml`.
-3. Run `aw sync --opencode` or `aw sync --claude-code`.
-4. Get a predictable, target-specific workspace surface with only `aw`-owned parts updated.
+3. Run `aw plan --opencode` to preview managed changes.
+4. Run `aw apply --opencode` to materialize those changes.
+5. Get a predictable, target-specific workspace surface with only `aw`-owned parts updated.
 
 ## Non-Goals
 
@@ -83,14 +84,28 @@ Constraints:
 - no migration of an existing workspace
 - no side effects beyond writing the config file
 
-### `aw sync`
+### `aw plan`
 
-Materializes the desired workspace state for a target.
+Previews the managed workspace changes for a supported target.
 
 Initial target flags:
 
-- `aw sync --opencode`
-- `aw sync --claude-code`
+- `aw plan --opencode`
+
+Constraints:
+
+- target-specific rendering only
+- no writes to workspace files or state
+- no silent rewriting of foreign files
+- surface ownership conflicts clearly
+
+### `aw apply`
+
+Materializes the desired workspace state for a supported target.
+
+Initial target flags:
+
+- `aw apply --opencode`
 
 Constraints:
 
@@ -98,6 +113,7 @@ Constraints:
 - no silent rewriting of foreign files
 - delete only `aw`-owned orphaned files
 - update only `aw` markers inside instruction files
+- recompute current desired state instead of consuming a saved plan artifact
 
 ### Deferred CLI Surface
 
@@ -140,11 +156,11 @@ agents:
       path: testing/testing-reality-checker.md
 
 skills:
-  brainstorming:
+  frontend-design:
     github:
       repo: anthropics/skills
-      ref: 7f3c9b2
-      path: brainstorming
+      ref: main
+      path: skills/frontend-design
 ```
 
 ## Source Selectors
@@ -157,6 +173,9 @@ Supported selectors in v1:
 - `path`
 - `http`
 - `github`
+
+Deferred selectors:
+
 - `gitlab`
 
 ### `inline`
@@ -202,11 +221,11 @@ GitHub-backed source.
 
 ```yaml
 skills:
-  brainstorming:
+  frontend-design:
     github:
       repo: anthropics/skills
-      ref: 7f3c9b2
-      path: brainstorming
+      ref: main
+      path: skills/frontend-design
 ```
 
 Fields:
@@ -215,24 +234,7 @@ Fields:
 - `ref`: pinned branch, tag, or commit-ish
 - `path`: path inside the repo
 
-### `gitlab`
-
-GitLab-backed source.
-
-```yaml
-agents:
-  reviewer:
-    gitlab:
-      repo: group/subgroup/agency-assets
-      ref: v1.2.0
-      path: agents/reviewer.md
-```
-
-Fields:
-
-- `repo`: GitLab repo path
-- `ref`: pinned branch, tag, or commit-ish
-- `path`: path inside the repo
+`gitlab` is deferred from the current v1 slice and is not part of the supported selector set for the current CLI.
 
 ## Resource Semantics
 
@@ -246,7 +248,7 @@ Purpose:
 Shape:
 
 - single markdown document only
-- source selectors: `inline`, `path`, `http`, `github`, `gitlab`
+- source selectors: `inline`, `path`, `http`, `github`
 
 Example:
 
@@ -275,7 +277,7 @@ Purpose:
 Shape:
 
 - single markdown document only
-- source selectors: `inline`, `path`, `http`, `github`, `gitlab`
+- source selectors: `inline`, `path`, `http`, `github`
 
 Example:
 
@@ -303,7 +305,7 @@ Purpose:
 Shape:
 
 - single markdown document only
-- source selectors: `inline`, `path`, `http`, `github`, `gitlab`
+- source selectors: `inline`, `path`, `http`, `github`
 
 Example:
 
@@ -335,7 +337,7 @@ Shape:
 
 - `inline` = single-file only
 - `http` = single-file only
-- `path`, `github`, `gitlab`:
+- `path`, `github`:
   - if resolved path is a file, save only that file
   - if resolved path is a directory, import the bundle
 
@@ -357,11 +359,11 @@ skills:
   systematic-debugging:
     path: ./.aw/skills/systematic-debugging
 
-  brainstorming:
+  frontend-design:
     github:
       repo: anthropics/skills
-      ref: 7f3c9b2
-      path: brainstorming
+      ref: main
+      path: skills/frontend-design
 ```
 
 Materialization rules:
@@ -380,7 +382,7 @@ Schema stays mostly target-neutral. Rendering is target-specific.
 
 ### OpenCode Adapter
 
-OpenCode is the complete target in v1.
+OpenCode is the only supported target in the current v1 slice.
 
 Responsibilities:
 
@@ -389,20 +391,16 @@ Responsibilities:
 - materialize `agents` into `.opencode/agents/<id>.md`
 - materialize `skills` into `.agents/skills/<id>/...`
 
-### Claude Code Adapter
+### Deferred Targets
 
-Claude Code is partial in v1.
+Additional targets such as Claude Code are deferred from the current v1 slice.
 
-Responsibilities:
+When future target work is added, it should:
 
-- materialize `sections` into managed sections inside the primary instruction file
-- support additional resource types only where rendering is simple and safe
+- materialize only clearly supported resource kinds
 - emit clear warnings for unsupported resource kinds
-
-Principles:
-
-- no silent no-op behavior
-- no fake parity with OpenCode
+- avoid silent no-op behavior
+- avoid fake parity with OpenCode
 
 ## Instruction File Materialization
 
@@ -484,9 +482,18 @@ Meaning:
 
 This avoids accidental takeover of hand-maintained workspaces.
 
-## Sync Semantics
+## Plan And Apply Semantics
 
-`aw sync` should conceptually perform these steps:
+`aw plan` should conceptually perform these steps:
+
+1. Load and validate `aw.yaml`.
+2. Resolve each resource from its selected source.
+3. Normalize resources into internal resolved forms.
+4. Ask the target adapter to build desired output.
+5. Compare desired output against the current workspace.
+6. Report managed creates, updates, deletes, and ownership conflicts without writing files or state.
+
+`aw apply` should conceptually perform these steps:
 
 1. Load and validate `aw.yaml`.
 2. Resolve each resource from its selected source.
@@ -495,7 +502,9 @@ This avoids accidental takeover of hand-maintained workspaces.
 5. Apply file updates for `aw`-owned files.
 6. Apply section updates inside `aw` markers.
 7. Remove orphaned `aw`-owned outputs.
-8. Report warnings for unsupported or invalid target-specific cases.
+8. Persist owned state if needed for safe future apply and prune behavior.
+
+`aw apply` recomputes desired state from current config and current sources instead of consuming output from a previous `aw plan` run.
 
 ## Internal Architecture
 
@@ -504,7 +513,7 @@ Expected layers:
 - `config`
   - parse and validate `aw.yaml`
 - `resolve`
-  - inline/path/http/github/gitlab
+  - inline/path/http/github
 - `model`
   - normalized resolved resources
 - `adapter`
@@ -526,8 +535,8 @@ Key boundary:
 v1 is successful when:
 
 - a developer can describe a workspace using one `aw.yaml`
-- `aw sync --opencode` can safely materialize the agreed resources
-- `aw sync --claude-code` can safely materialize supported resources and warn on unsupported ones
+- `aw plan --opencode` can safely preview managed changes without writing files or state
+- `aw apply --opencode` can safely materialize the agreed resources
 - only `aw`-owned files are updated or deleted
 - only `aw` markers are modified in instruction files
 - the resulting schema stays readable without hidden modes or a mini DSL
@@ -544,7 +553,8 @@ These are intentionally deferred and not required for v1:
 - one big managed instruction region instead of per-section blocks
 - multi-file inline skills
 - multi-file commands or agents
-- direct support for additional source kinds
+- direct support for additional source kinds such as `gitlab`
+- additional targets such as Claude Code
 
 ## Why This Direction
 
