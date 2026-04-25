@@ -2,13 +2,17 @@
 
 ## Product
 
-`agentspec` is a small Go CLI that materializes agent workspace resources from `agentspec.yaml`.
+`agentspec` is a small Go CLI that materializes a managed agent workspace surface from `agentspec.yaml`.
+
+## Why It Exists
+
+Maintaining agent workspace files by hand across repositories means repeatedly copying commands, agents, skills, and shared instruction text, then keeping them aligned over time. `agentspec` exists to stop that drift by treating `agentspec.yaml` as the single source of truth for the managed workspace surface.
 
 ## Product Boundary
 
 `agentspec` is a declarative workspace sync tool. It is not a workflow runtime, task tracker, bootstrap tool, or package manager.
 
-## Core User Flow
+## Sync Flow
 
 1. Run `agentspec init` to create `agentspec.yaml`.
 2. Describe the desired workspace resources in `agentspec.yaml`.
@@ -17,12 +21,21 @@
 
 ## Resource Model
 
-The top-level resource types are:
+The top-level resource types describe what `agentspec` materializes into the workspace:
 
-- `sections`
-- `commands`
-- `agents`
-- `skills`
+- `sections`: managed instruction fragments inserted into `AGENTS.md`
+- `commands`: target command documents such as `.opencode/commands/<id>.md`
+- `agents`: target agent documents such as `.opencode/agents/<id>.md`
+- `skills`: directory-based skill bundles such as `.agents/skills/<id>/...`
+
+These are workspace resources, not runtime objects. `agentspec` materializes their files; it does not execute them.
+
+## Sync Model
+
+- `agentspec plan --opencode` previews the managed create, update, delete, and conflict set without writing workspace files.
+- `agentspec apply --opencode` materializes the desired managed state, updates managed instruction sections, prunes orphaned `agentspec`-owned outputs, and refuses to silently overwrite foreign content.
+
+Only the `agentspec`-owned surface is updated. Foreign content is left alone unless it is already inside an `agentspec`-managed boundary.
 
 ## Architecture Boundaries
 
