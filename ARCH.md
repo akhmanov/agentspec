@@ -23,7 +23,7 @@ This document defines the repo-level architecture contract for v1. It exists to 
 
 The expected package shape for the first slice is:
 
-- `cmd/agentspec`
+- repository root
   - CLI transport only
   - process entrypoint
   - command wiring and execution-context parsing
@@ -47,7 +47,7 @@ The expected package shape for the first slice is:
 
 Dependencies must point inward.
 
-- `cmd/agentspec` may depend on `internal/config`, `internal/resolve`, `internal/model`, adapter packages, and `internal/sync`.
+- the repository root package may depend on `internal/config`, `internal/resolve`, `internal/model`, adapter packages, and `internal/sync`.
 - `internal/config` must not depend on adapter or sync packages.
 - `internal/resolve` must not know target file layout and should resolve local selectors relative to the loaded config file.
 - adapters must not parse raw config or resolve selectors.

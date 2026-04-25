@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"agentspec/internal/config"
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/config"
+	"github.com/akhmanov/agentspec/internal/model"
 	"gopkg.in/yaml.v3"
 )
 

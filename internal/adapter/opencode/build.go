@@ -3,7 +3,7 @@ package opencode
 import (
 	"path/filepath"
 
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/model"
 )
 
 func Build(res *model.Resolved) *model.Desired {

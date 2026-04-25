@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/model"
 )
 
 func TestPreviewReportsManagedCreatesWithoutWriting(t *testing.T) {

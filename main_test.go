@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -60,7 +61,20 @@ func TestInitWritesStarterConfig(t *testing.T) {
 		t.Fatalf("read agentspec.yaml: %v", err)
 	}
 
-	want := "sections: {}\ncommands: {}\nagents: {}\nskills: {}\n"
+	want := strings.Join([]string{
+		"# Managed sections inserted into AGENTS.md / CLAUDE.md",
+		"sections: {}",
+		"",
+		"# Command documents materialized for the target",
+		"commands: {}",
+		"",
+		"# Agent documents materialized for the target",
+		"agents: {}",
+		"",
+		"# Skill bundles materialized for the target",
+		"skills: {}",
+		"",
+	}, "\n")
 	if string(raw) != want {
 		t.Fatalf("got config %q, want %q", string(raw), want)
 	}
@@ -80,9 +94,108 @@ func TestInitWritesStarterConfigToExplicitRoot(t *testing.T) {
 		t.Fatalf("read rooted agentspec.yaml: %v", err)
 	}
 
-	want := "sections: {}\ncommands: {}\nagents: {}\nskills: {}\n"
+	want := strings.Join([]string{
+		"# Managed sections inserted into AGENTS.md / CLAUDE.md",
+		"sections: {}",
+		"",
+		"# Command documents materialized for the target",
+		"commands: {}",
+		"",
+		"# Agent documents materialized for the target",
+		"agents: {}",
+		"",
+		"# Skill bundles materialized for the target",
+		"skills: {}",
+		"",
+	}, "\n")
 	if string(raw) != want {
 		t.Fatalf("got config %q, want %q", string(raw), want)
+	}
+}
+
+func TestVersionFlagsPrintVersion(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, args := range [][]string{{"agentspec", "--version"}, {"agentspec", "-v"}} {
+		out, err := runCommand(t, dir, args)
+		if err != nil {
+			t.Fatalf("run %v: %v", args, err)
+		}
+		if out != "agentspec dev\n" {
+			t.Fatalf("got version output %q, want %q", out, "agentspec dev\n")
+		}
+	}
+}
+
+func TestRootHelpExplainsExecutionContextFallbacks(t *testing.T) {
+	out, err := runCommand(t, t.TempDir(), []string{"agentspec", "--help"})
+	if err != nil {
+		t.Fatalf("run root help: %v", err)
+	}
+
+	for _, want := range []string{
+		"AGENTSPEC_ROOT",
+		"AGENTSPEC_CONFIG",
+		"<root>/agentspec.yaml",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("root help missing %q in %q", want, out)
+		}
+	}
+}
+
+func TestPlanHelpExplainsTargetValuesAndVerbose(t *testing.T) {
+	out, err := runCommand(t, t.TempDir(), []string{"agentspec", "plan", "--help"})
+	if err != nil {
+		t.Fatalf("run plan help: %v", err)
+	}
+
+	for _, want := range []string{
+		"repeatable",
+		"opencode",
+		"claude-code",
+		"conflict reasons",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("plan help missing %q in %q", want, out)
+		}
+	}
+}
+
+func TestPlanRejectsUnsupportedTargetWithSupportedValues(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections: {}\ncommands: {}\nagents: {}\nskills: {}\n")
+
+	_, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "nope"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, want := range []string{"unsupported target \"nope\"", "opencode", "claude-code"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("got error %q, want substring %q", err, want)
+		}
+	}
+}
+
+func TestPlanDeduplicatesRepeatedTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    inline: |\n      Explore\nagents: {}\nskills: {}\n")
+
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode", "--target", "opencode", "--target", "claude-code"})
+	if err != nil {
+		t.Fatalf("run plan with duplicate targets: %v", err)
+	}
+
+	want := strings.Join([]string{
+		"opencode:",
+		strings.TrimSuffix(compactGroup("create", filepath.Join(".opencode", "commands", "explore.md"), "AGENTS.md#core"), "\n"),
+		"",
+		"claude-code:",
+		strings.TrimSuffix(compactGroup("create", filepath.Join(".claude", "commands", "explore.md"), "CLAUDE.md#core"), "\n"),
+		"",
+	}, "\n")
+	if out != want {
+		t.Fatalf("got duplicate-target output %q, want %q", out, want)
 	}
 }
 
@@ -138,6 +251,36 @@ func TestPlanUsesEnvironmentFallbacksForRootAndConfig(t *testing.T) {
 	out, err := runCommand(t, runDir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run plan with env context: %v", err)
+	}
+
+	if out != compactGroup("create", commandPath("explore"), "AGENTS.md#core") {
+		t.Fatalf("got plan output %q", out)
+	}
+}
+
+func TestPlanUsesWorkingDirectoryForRelativeConfigWhenRootComesFromEnv(t *testing.T) {
+	workRoot := t.TempDir()
+	runDir := t.TempDir()
+
+	writeWorkspaceFile(t, filepath.Join(runDir, "config", "dev", "agentspec.yaml"), strings.Join([]string{
+		"sections:",
+		"  core:",
+		"    inline: |",
+		"      Core rules",
+		"commands:",
+		"  explore:",
+		"    inline: |",
+		"      Explore",
+		"agents: {}",
+		"skills: {}",
+		"",
+	}, "\n"))
+
+	t.Setenv("AGENTSPEC_ROOT", workRoot)
+
+	out, err := runCommand(t, runDir, []string{"agentspec", "--config", filepath.Join("config", "dev", "agentspec.yaml"), "plan", "--target", "opencode"})
+	if err != nil {
+		t.Fatalf("run plan with env root and relative config: %v", err)
 	}
 
 	if out != compactGroup("create", commandPath("explore"), "AGENTS.md#core") {
@@ -391,10 +534,10 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read local smoke README: %v", err)
 	}
-	if !strings.Contains(string(readme), "go run ../../cmd/agentspec plan --target opencode") {
+	if !strings.Contains(string(readme), "go run ../.. plan --target opencode") {
 		t.Fatalf("expected plan smoke command in README, got %q", string(readme))
 	}
-	if !strings.Contains(string(readme), "go run ../../cmd/agentspec apply --target opencode") {
+	if !strings.Contains(string(readme), "go run ../.. apply --target opencode") {
 		t.Fatalf("expected apply smoke command in README, got %q", string(readme))
 	}
 
@@ -450,6 +593,61 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 	}
 }
 
+func TestCommittedGithubSmokeExampleUsesRootEntrypoint(t *testing.T) {
+	dir := copyExampleWorkspace(t, "github-smoke")
+
+	readme, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatalf("read github smoke README: %v", err)
+	}
+	for _, want := range []string{
+		"go run ../.. plan --target opencode",
+		"go run ../.. apply --target opencode",
+	} {
+		if !strings.Contains(string(readme), want) {
+			t.Fatalf("expected github smoke README to contain %q, got %q", want, string(readme))
+		}
+	}
+}
+
+func TestRepoRootIsDirectlyBuildable(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "agentspec")
+	if runtime.GOOS == "windows" {
+		outPath += ".exe"
+	}
+
+	cmd := exec.Command("go", "build", "-o", outPath, ".")
+	cmd.Dir = repoRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build repo root: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("stat built binary: %v", err)
+	}
+}
+
+func TestRootReadmeDocumentsInstallAndQuickstart(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read root README: %v", err)
+	}
+
+	for _, want := range []string{
+		"go install github.com/akhmanov/agentspec@latest",
+		"agentspec --version",
+		"agentspec init",
+		"agentspec plan --target opencode",
+		"agentspec apply --target opencode",
+		"claude-code",
+		"AGENTSPEC_GIT_TIMEOUT",
+	} {
+		if !strings.Contains(string(readme), want) {
+			t.Fatalf("root README missing %q in %q", want, string(readme))
+		}
+	}
+}
+
 func managedWorkspace(t *testing.T) string {
 	t.Helper()
 
@@ -496,7 +694,7 @@ func repoRoot(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	return filepath.Dir(file)
 }
 
 func copyDir(t *testing.T, src, dst string) {

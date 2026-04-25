@@ -1,4 +1,4 @@
-module agentspec
+module github.com/akhmanov/agentspec
 
 go 1.26.0
 

@@ -2,13 +2,13 @@
 
 This example is deterministic: every source file lives in this repository, and the smoke commands do not require network access.
 
-Run the smoke from a temp copy or a fresh checkout of the repository so `apply` does not mutate the committed fixture in place. From this example directory:
+Run the smoke from a temp copy or a fresh checkout of the repository so `apply` does not mutate the committed fixture in place. This is a repository validation flow, not the primary installation path. From this example directory:
 
 - `cd ../.. && cp -R . /tmp/agentspec-local-smoke-repo && cd /tmp/agentspec-local-smoke-repo/example/local-smoke`
-- `go run ../../cmd/agentspec plan --target opencode`
-- `go run ../../cmd/agentspec plan --verbose --target opencode`
-- `go run ../../cmd/agentspec apply --target opencode`
-- `go run ../../cmd/agentspec plan --target opencode`
+- `go run ../.. plan --target opencode`
+- `go run ../.. plan --verbose --target opencode`
+- `go run ../.. apply --target opencode`
+- `go run ../.. plan --target opencode`
 
 Expected behavior:
 

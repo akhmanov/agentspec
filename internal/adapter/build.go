@@ -3,10 +3,12 @@ package adapter
 import (
 	"fmt"
 
-	"agentspec/internal/adapter/claudecode"
-	"agentspec/internal/adapter/opencode"
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/adapter/claudecode"
+	"github.com/akhmanov/agentspec/internal/adapter/opencode"
+	"github.com/akhmanov/agentspec/internal/model"
 )
+
+var supportedTargets = []string{"opencode", "claude-code"}
 
 func Build(target string, res *model.Resolved) (*model.Desired, error) {
 	switch target {
@@ -20,6 +22,14 @@ func Build(target string, res *model.Resolved) (*model.Desired, error) {
 }
 
 func SupportedTarget(target string) bool {
-	_, err := Build(target, &model.Resolved{})
-	return err == nil
+	for _, supported := range supportedTargets {
+		if target == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func SupportedTargets() []string {
+	return append([]string(nil), supportedTargets...)
 }

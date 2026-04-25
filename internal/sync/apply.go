@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/model"
 )
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -566,7 +566,7 @@ func hasManagedSection(raw, id string) bool {
 }
 
 func hasForeignSectionMarker(raw, id string) bool {
-	matches := regexp.MustCompile(`<!-- ([a-zA-Z0-9._-]+):section:start ` + regexp.QuoteMeta(id) + ` -->`).FindAllStringSubmatch(raw, -1)
+	matches := regexp.MustCompile(`<!-- ([a-zA-Z0-9._-]+):section:start `+regexp.QuoteMeta(id)+` -->`).FindAllStringSubmatch(raw, -1)
 	for _, match := range matches {
 		if len(match) == 2 && match[1] != currentSectionPrefix {
 			return true

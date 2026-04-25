@@ -568,7 +568,7 @@ Expected layers:
   - apply desired state and orphan cleanup
 - `state`
   - track `agentspec`-owned outputs if needed
-- `cmd/agentspec`
+- the repository root package
   - CLI transport
 
 Key boundary:

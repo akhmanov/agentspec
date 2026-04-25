@@ -7,15 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"agentspec/internal/adapter"
-	"agentspec/internal/config"
-	"agentspec/internal/model"
-	"agentspec/internal/resolve"
-	awsync "agentspec/internal/sync"
+	"github.com/akhmanov/agentspec/internal/adapter"
+	"github.com/akhmanov/agentspec/internal/config"
+	"github.com/akhmanov/agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/resolve"
+	awsync "github.com/akhmanov/agentspec/internal/sync"
 	"github.com/urfave/cli/v3"
 )
 
 const defaultConfigPath = "agentspec.yaml"
+const defaultVersion = "dev"
+
+var version = defaultVersion
 
 const (
 	envRootPath   = "AGENTSPEC_ROOT"
@@ -35,12 +38,17 @@ func main() {
 }
 
 func newCommand() *cli.Command {
+	cli.VersionPrinter = func(cmd *cli.Command) {
+		fmt.Fprintf(cmd.Root().Writer, "%s %s\n", cmd.Root().Name, cmd.Root().Version)
+	}
+
 	return &cli.Command{
-		Name:  "agentspec",
-		Usage: "materialize workspace resources from agentspec.yaml",
+		Name:    "agentspec",
+		Usage:   "materialize workspace resources from agentspec.yaml",
+		Version: version,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "root", Usage: "workspace root for config, outputs, and state"},
-			&cli.StringFlag{Name: "config", Usage: "path to agentspec config file"},
+			&cli.StringFlag{Name: "root", Usage: "workspace root; falls back to AGENTSPEC_ROOT, then cwd"},
+			&cli.StringFlag{Name: "config", Usage: "config path; falls back to AGENTSPEC_CONFIG, then <root>/agentspec.yaml"},
 		},
 		Commands: []*cli.Command{
 			{
@@ -58,8 +66,8 @@ func newCommand() *cli.Command {
 				Name:  "plan",
 				Usage: "preview workspace changes for one or more targets",
 				Flags: []cli.Flag{
-					&cli.StringSliceFlag{Name: "target", Usage: "target workspace surface to preview"},
-					&cli.BoolFlag{Name: "verbose"},
+					&cli.StringSliceFlag{Name: "target", Usage: targetFlagUsage("preview")},
+					&cli.BoolFlag{Name: "verbose", Usage: "show one path per line and include conflict reasons"},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					return runPlan(cmd)
@@ -69,7 +77,7 @@ func newCommand() *cli.Command {
 				Name:  "apply",
 				Usage: "apply workspace changes for one or more targets",
 				Flags: []cli.Flag{
-					&cli.StringSliceFlag{Name: "target", Usage: "target workspace surface to apply"},
+					&cli.StringSliceFlag{Name: "target", Usage: targetFlagUsage("apply")},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					return runApply(cmd)
@@ -136,7 +144,6 @@ func runApply(cmd *cli.Command) error {
 	return nil
 }
 
-
 func selectedExecutionContext(cmd *cli.Command) (executionContext, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -144,6 +151,7 @@ func selectedExecutionContext(cmd *cli.Command) (executionContext, error) {
 	}
 
 	root := cmd.String("root")
+	rootFromFlag := root != ""
 	if root == "" {
 		root = os.Getenv(envRootPath)
 	}
@@ -154,30 +162,49 @@ func selectedExecutionContext(cmd *cli.Command) (executionContext, error) {
 	}
 
 	configPath := cmd.String("config")
+	configFromFlag := configPath != ""
 	if configPath == "" {
 		configPath = os.Getenv(envConfigPath)
 	}
 	if configPath == "" {
 		configPath = filepath.Join(root, defaultConfigPath)
 	} else {
-		configPath = cliPath(root, configPath)
+		configBase := root
+		if configFromFlag && !rootFromFlag {
+			configBase = wd
+		}
+		if rootFromFlag {
+			configBase = root
+		}
+		configPath = cliPath(configBase, configPath)
 	}
 
 	return executionContext{root: root, configPath: configPath}, nil
 }
 
-
 func selectedTargets(cmd *cli.Command) ([]string, error) {
-	targets := cmd.StringSlice("target")
-	if len(targets) == 0 {
+	rawTargets := cmd.StringSlice("target")
+	if len(rawTargets) == 0 {
 		return nil, fmt.Errorf("command requires a target flag")
 	}
-	for _, target := range targets {
+
+	targets := make([]string, 0, len(rawTargets))
+	seen := make(map[string]struct{}, len(rawTargets))
+	for _, target := range rawTargets {
 		if !adapter.SupportedTarget(target) {
-			return nil, fmt.Errorf("unsupported target %q", target)
+			return nil, fmt.Errorf("unsupported target %q (supported targets: %s)", target, strings.Join(adapter.SupportedTargets(), ", "))
 		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
 	}
 	return targets, nil
+}
+
+func targetFlagUsage(action string) string {
+	return fmt.Sprintf("target to %s; repeatable; supported: %s", action, strings.Join(adapter.SupportedTargets(), ", "))
 }
 
 func loadDesired(ctx executionContext, target string) (string, *model.Desired, error) {

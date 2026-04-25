@@ -47,11 +47,11 @@ For local selectors in `agentspec.yaml`, relative `path:` values SHALL resolve f
 - **THEN** `agentspec` reads that exact absolute path instead of rebasing it to the config directory
 
 ### Requirement: Sync commands use explicit repeatable target selection
-`agentspec plan` and `agentspec apply` SHALL require at least one `--target` flag. `--target` SHALL be repeatable, SHALL preserve user-specified order, and SHALL accept supported target identifiers including `opencode` and `claude-code`.
+`agentspec plan` and `agentspec apply` SHALL require at least one `--target` flag. `--target` SHALL be repeatable, repeated target values SHALL be deduplicated while preserving first-occurrence order, and supported target identifiers SHALL include `opencode` and `claude-code`.
 
-Each target SHALL keep separate planning and apply state. Multi-target apply SHALL run sequentially in target order and SHALL stop on the first target error without rolling back earlier successful targets.
+Each distinct target SHALL keep separate planning and apply state. Multi-target apply SHALL run sequentially in target order and SHALL stop on the first target error without rolling back earlier successful targets.
 
-#### Scenario: Plan groups multiple targets distinctly
+#### Scenario: Plan groups multiple distinct targets
 - **WHEN** the user runs `agentspec plan --target opencode --target claude-code`
 - **THEN** the output identifies which planned changes belong to `opencode`
 - **AND** the output identifies which planned changes belong to `claude-code`
@@ -66,6 +66,12 @@ Each target SHALL keep separate planning and apply state. Multi-target apply SHA
 #### Scenario: Missing target is rejected
 - **WHEN** the user runs `agentspec plan` or `agentspec apply` without any `--target`
 - **THEN** `agentspec` fails with an error that the command requires at least one target
+
+#### Scenario: Duplicate targets are normalized once
+- **WHEN** the user runs `agentspec plan --target opencode --target opencode --target claude-code`
+- **THEN** `agentspec` plans for `opencode` first and `claude-code` second
+- **AND** the output contains one group for `opencode`
+- **AND** the output contains one group for `claude-code`
 
 ### Requirement: OpenCode uses a fully target-native artifact surface
 When syncing for the `opencode` target, `agentspec` SHALL materialize sections into `AGENTS.md`, commands into `.opencode/commands/<id>.md`, agents into `.opencode/agents/<id>.md`, and skills into `.opencode/skills/<id>/...`.
@@ -91,4 +97,45 @@ When syncing for the `claude-code` target, `agentspec` SHALL materialize section
 - **WHEN** the user runs `agentspec apply --target opencode --target claude-code`
 - **THEN** `agentspec` writes separate managed state files for the two targets
 - **AND** a later `plan --target claude-code` does not depend on the `opencode` state file to compute Claude Code ownership
+
+### Requirement: CLI exposes version flags
+The `agentspec` root command SHALL accept `--version` and `-v`. Each flag invocation SHALL print a single-line version string in the format `agentspec <version>` to standard output and SHALL exit successfully without requiring a subcommand. When no explicit build version is injected, the reported version SHALL be `dev`.
+
+#### Scenario: Long version flag prints the version
+- **WHEN** a user runs `agentspec --version`
+- **THEN** the command prints `agentspec <version>` to standard output
+- **AND** exits successfully without running a subcommand
+
+#### Scenario: Short version flag prints the same version
+- **WHEN** a user runs `agentspec -v`
+- **THEN** the command prints the same `agentspec <version>` string as `--version`
+- **AND** exits successfully without running a subcommand
+
+### Requirement: CLI help explains execution-context and target-selection behavior
+The root help output SHALL describe how `--root` and `--config` resolve through `AGENTSPEC_ROOT`, `AGENTSPEC_CONFIG`, and their default paths. The `plan` help output SHALL describe `--target` as repeatable, list supported target identifiers `opencode` and `claude-code`, and describe the behavior of `--verbose`. Errors for invalid target identifiers SHALL list the supported target values.
+
+#### Scenario: Root help explains execution-context fallbacks
+- **WHEN** a user runs `agentspec --help`
+- **THEN** the help output mentions `AGENTSPEC_ROOT`
+- **AND** the help output mentions `AGENTSPEC_CONFIG`
+- **AND** the help output explains the default config path `<root>/agentspec.yaml`
+
+#### Scenario: Plan help explains target and verbose flags
+- **WHEN** a user runs `agentspec plan --help`
+- **THEN** the help output states that `--target` is repeatable
+- **AND** the help output lists `opencode` and `claude-code` as supported values
+- **AND** the help output explains that `--verbose` expands the computed change set with per-path output and conflict reasons
+
+#### Scenario: Invalid target error lists supported values
+- **WHEN** a user runs `agentspec plan --target nope`
+- **THEN** the command fails with an error identifying `nope` as unsupported
+- **AND** the error lists `opencode` and `claude-code` as supported values
+
+### Requirement: Init writes an annotated starter config
+`agentspec init` SHALL write a valid starter `agentspec.yaml` that keeps the four top-level resource maps and adds comments that explain what `sections`, `commands`, `agents`, and `skills` materialize into.
+
+#### Scenario: Starter config includes explanatory comments
+- **WHEN** a user runs `agentspec init`
+- **THEN** `agentspec.yaml` contains the `sections`, `commands`, `agents`, and `skills` top-level keys
+- **AND** the file includes explanatory comments for each top-level resource type
 

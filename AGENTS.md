@@ -41,7 +41,7 @@ Only the `agentspec`-owned surface is updated. Foreign content is left alone unl
 
 Keep the package direction clear:
 
-- `cmd/agentspec` wires the CLI only.
+- the repository root package wires the CLI only.
 - `internal/config` loads and validates config.
 - `internal/resolve` resolves sources.
 - `internal/model` holds normalized resource shapes.

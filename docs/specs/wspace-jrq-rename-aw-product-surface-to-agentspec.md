@@ -79,7 +79,7 @@ Removing the runtime GitHub base URL override env vars follows the same principl
 
 ## Architecture Impact
 
-- `cmd/aw` and any remaining `aw` command wiring should be removed in favor of one `cmd/agentspec` transport surface.
+- `cmd/aw` and any remaining `aw` command wiring should be removed in favor of one repository-root `agentspec` transport surface.
 - `internal/config`, `internal/resolve`, `internal/adapter/opencode`, and `internal/sync` remain the main affected layers because the rename crosses transport, config discovery, ownership persistence, and marker semantics.
 - The sync layer should become simpler than Revision 1 by removing legacy ownership loading, cleanup, and marker upgrade paths.
 - Resolve should keep testability through internal seams and test fixtures, but runtime env-based GitHub endpoint overrides are no longer part of the product contract.

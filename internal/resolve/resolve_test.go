@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"agentspec/internal/config"
-	"agentspec/internal/model"
+	"github.com/akhmanov/agentspec/internal/config"
+	"github.com/akhmanov/agentspec/internal/model"
 )
 
 func TestNewRemoteLoaderIgnoresGitHubBaseURLEnvVars(t *testing.T) {
