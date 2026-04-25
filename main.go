@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime/debug"
 	"strings"
 
 	"github.com/akhmanov/agentspec/internal/adapter"
@@ -19,6 +21,8 @@ const defaultConfigPath = "agentspec.yaml"
 const defaultVersion = "dev"
 
 var version = defaultVersion
+
+var pseudoVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:-|\-0\.)\d{14}-[0-9a-f]{12,}(?:\+dirty)?$`)
 
 const (
 	envRootPath   = "AGENTSPEC_ROOT"
@@ -45,7 +49,7 @@ func newCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "agentspec",
 		Usage:   "materialize workspace resources from agentspec.yaml",
-		Version: version,
+		Version: reportedVersion(version, moduleVersion()),
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "root", Usage: "workspace root; falls back to AGENTSPEC_ROOT, then cwd"},
 			&cli.StringFlag{Name: "config", Usage: "config path; falls back to AGENTSPEC_CONFIG, then <root>/agentspec.yaml"},
@@ -85,6 +89,24 @@ func newCommand() *cli.Command {
 			},
 		},
 	}
+}
+
+func reportedVersion(buildVersion, moduleVer string) string {
+	if buildVersion != "" && buildVersion != defaultVersion && buildVersion != "(devel)" {
+		return strings.TrimPrefix(buildVersion, "v")
+	}
+	if moduleVer != "" && moduleVer != "(devel)" && !pseudoVersionPattern.MatchString(moduleVer) {
+		return strings.TrimPrefix(moduleVer, "v")
+	}
+	return defaultVersion
+}
+
+func moduleVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	return info.Main.Version
 }
 
 func runPlan(cmd *cli.Command) error {

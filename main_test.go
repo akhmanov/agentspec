@@ -127,6 +127,34 @@ func TestVersionFlagsPrintVersion(t *testing.T) {
 	}
 }
 
+func TestReportedVersionUsesModuleVersionForTaggedBuilds(t *testing.T) {
+	got := reportedVersion(defaultVersion, "v0.0.1")
+	if got != "0.0.1" {
+		t.Fatalf("got version %q, want %q", got, "0.0.1")
+	}
+}
+
+func TestReportedVersionKeepsDevForLocalBuilds(t *testing.T) {
+	got := reportedVersion(defaultVersion, "(devel)")
+	if got != defaultVersion {
+		t.Fatalf("got version %q, want %q", got, defaultVersion)
+	}
+}
+
+func TestReportedVersionPrefersInjectedBuildVersion(t *testing.T) {
+	got := reportedVersion("0.0.1", "v9.9.9")
+	if got != "0.0.1" {
+		t.Fatalf("got version %q, want %q", got, "0.0.1")
+	}
+}
+
+func TestReportedVersionIgnoresPseudoModuleVersions(t *testing.T) {
+	got := reportedVersion(defaultVersion, "v0.0.0-20260425173004-b8be4a96777e+dirty")
+	if got != defaultVersion {
+		t.Fatalf("got version %q, want %q", got, defaultVersion)
+	}
+}
+
 func TestRootHelpExplainsExecutionContextFallbacks(t *testing.T) {
 	out, err := runCommand(t, t.TempDir(), []string{"agentspec", "--help"})
 	if err != nil {
