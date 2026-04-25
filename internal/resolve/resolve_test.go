@@ -1,30 +1,27 @@
 package resolve
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"agentspec/internal/config"
+	"agentspec/internal/model"
 )
 
 func TestNewRemoteLoaderIgnoresGitHubBaseURLEnvVars(t *testing.T) {
 	t.Setenv("AGENTSPEC_GITHUB_RAW_BASE_URL", "https://example.invalid/raw")
-	t.Setenv("AGENTSPEC_GITHUB_ARCHIVE_BASE_URL", "https://example.invalid/archive")
 
 	loader := newRemoteLoader(nil)
 
 	if loader.githubRawBaseURL != "https://raw.githubusercontent.com" {
 		t.Fatalf("got github raw base url %q", loader.githubRawBaseURL)
-	}
-	if loader.githubArchiveBaseURL != "https://codeload.github.com" {
-		t.Fatalf("got github archive base url %q", loader.githubArchiveBaseURL)
 	}
 }
 
@@ -129,18 +126,22 @@ func TestResolveLoadsGitHubFileResourcesAndSingleFileSkill(t *testing.T) {
 }
 
 func TestResolveLoadsGitHubDirectorySkillBundle(t *testing.T) {
-	archive := buildGitHubArchive(t, map[string]string{
-		"repo-main/skills/debug/SKILL.md":       "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n",
-		"repo-main/skills/debug/notes/guide.md": "Guide\n",
-	})
-	server := newRemoteTestServer(t, nil, map[string][]byte{
-		"/archive/owner/repo/tar.gz/main": archive,
-	})
+	logPath := installFakeGit(t, "bundle")
+
+	var rawRequests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/raw/owner/repo/main/skills/debug":
+			atomic.AddInt32(&rawRequests, 1)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	defer server.Close()
 
 	loader := newRemoteLoader(server.Client())
 	loader.githubRawBaseURL = server.URL + "/raw"
-	loader.githubArchiveBaseURL = server.URL + "/archive"
 
 	cfg := &config.Config{
 		Sections:   map[string]config.Source{},
@@ -158,23 +159,159 @@ func TestResolveLoadsGitHubDirectorySkillBundle(t *testing.T) {
 	if len(res.Skills) != 1 || len(res.Skills[0].Files) != 2 {
 		t.Fatalf("got skills %#v", res.Skills)
 	}
+	if got := atomic.LoadInt32(&rawRequests); got != 1 {
+		t.Fatalf("got %d raw requests, want 1", got)
+	}
 	if got := res.Skills[0].Files[1].Path; got != filepath.Join("notes", "guide.md") {
 		t.Fatalf("got bundle path %q, want %q", got, filepath.Join("notes", "guide.md"))
 	}
+
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake git log: %v", err)
+	}
+	if !strings.Contains(string(logBody), "--depth 1") {
+		t.Fatalf("git log %q missing shallow fetch/clone flag", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "--filter=blob:none") {
+		t.Fatalf("git log %q missing filtered fetch flag", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "lfs=1") {
+		t.Fatalf("git log %q missing GIT_LFS_SKIP_SMUDGE=1", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "cmd=ls-tree") {
+		t.Fatalf("git log %q missing path inspection", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "cmd=cat-file") {
+		t.Fatalf("git log %q missing blob reads", string(logBody))
+	}
+	if strings.Contains(string(logBody), "cmd=checkout") {
+		t.Fatalf("git log %q should not materialize worktree checkout", string(logBody))
+	}
 }
 
-func TestResolveRejectsGitHubBundleWithoutRootSkillFile(t *testing.T) {
-	archive := buildGitHubArchive(t, map[string]string{
-		"repo-main/skills/debug/notes/guide.md": "Guide\n",
-	})
-	server := newRemoteTestServer(t, nil, map[string][]byte{
-		"/archive/owner/repo/tar.gz/main": archive,
-	})
+func TestResolveLoadsGitHubDirectorySkillBundleWithDottedPath(t *testing.T) {
+	logPath := installFakeGit(t, "bundle")
+	t.Setenv("AGENTSPEC_GIT_BUNDLE_DIR", "skills/debug.v1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/raw/owner/repo/main/skills/debug.v1":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	defer server.Close()
 
 	loader := newRemoteLoader(server.Client())
 	loader.githubRawBaseURL = server.URL + "/raw"
-	loader.githubArchiveBaseURL = server.URL + "/archive"
+
+	cfg := &config.Config{
+		Sections:   map[string]config.Source{},
+		Commands:   map[string]config.Source{},
+		Agents:     map[string]config.Source{},
+		Skills:     map[string]config.Source{"debug": {GitHub: &config.GitSource{Repo: "owner/repo", Ref: "main", Path: "skills/debug.v1"}}},
+		SkillOrder: []string{"debug"},
+	}
+
+	res, err := resolveWithLoader(t.TempDir(), cfg, loader)
+	if err != nil {
+		t.Fatalf("resolve github dotted bundle: %v", err)
+	}
+	if len(res.Skills) != 1 || len(res.Skills[0].Files) != 2 {
+		t.Fatalf("got skills %#v", res.Skills)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected git fallback log, stat err = %v", err)
+	}
+}
+
+func TestResolveLoadsGitHubDirectorySkillBundleWithMarkdownPath(t *testing.T) {
+	logPath := installFakeGit(t, "bundle")
+	t.Setenv("AGENTSPEC_GIT_BUNDLE_DIR", "skills/debug.md")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/raw/owner/repo/main/skills/debug.md":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	loader := newRemoteLoader(server.Client())
+	loader.githubRawBaseURL = server.URL + "/raw"
+
+	cfg := &config.Config{
+		Sections:   map[string]config.Source{},
+		Commands:   map[string]config.Source{},
+		Agents:     map[string]config.Source{},
+		Skills:     map[string]config.Source{"debug": {GitHub: &config.GitSource{Repo: "owner/repo", Ref: "main", Path: "skills/debug.md"}}},
+		SkillOrder: []string{"debug"},
+	}
+
+	res, err := resolveWithLoader(t.TempDir(), cfg, loader)
+	if err != nil {
+		t.Fatalf("resolve github markdown bundle: %v", err)
+	}
+	if len(res.Skills) != 1 || len(res.Skills[0].Files) != 2 {
+		t.Fatalf("got skills %#v", res.Skills)
+	}
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake git log: %v", err)
+	}
+	if !strings.Contains(string(logBody), "cmd=ls-tree") {
+		t.Fatalf("git log %q missing path inspection", string(logBody))
+	}
+}
+
+func TestResolveMissingGitHubSingleFileSkillDoesNotFallBackToGitBundle(t *testing.T) {
+	logPath := installFakeGit(t, "file")
+
+	server := newRemoteTestServer(t, nil, nil)
+	defer server.Close()
+
+	loader := newRemoteLoader(server.Client())
+	loader.githubRawBaseURL = server.URL + "/raw"
+
+	cfg := &config.Config{
+		Sections:   map[string]config.Source{},
+		Commands:   map[string]config.Source{},
+		Agents:     map[string]config.Source{},
+		Skills:     map[string]config.Source{"debug": {GitHub: &config.GitSource{Repo: "owner/repo", Ref: "main", Path: "skills/debug.md"}}},
+		SkillOrder: []string{"debug"},
+	}
+
+	_, err := resolveWithLoader(t.TempDir(), cfg, loader)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unexpected status 404 Not Found") {
+		t.Fatalf("got error %q, want raw 404", err)
+	}
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake git log: %v", err)
+	}
+	if !strings.Contains(string(logBody), "cmd=ls-tree") {
+		t.Fatalf("git log %q missing path inspection", string(logBody))
+	}
+	if strings.Contains(string(logBody), "cmd=cat-file") {
+		t.Fatalf("git log %q should not read bundle blobs for file path", string(logBody))
+	}
+}
+
+func TestResolveRejectsGitHubBundleWithoutRootSkillFile(t *testing.T) {
+	installFakeGit(t, "missing-root")
+
+	server := newRemoteTestServer(t, nil, nil)
+	defer server.Close()
+
+	loader := newRemoteLoader(server.Client())
+	loader.githubRawBaseURL = server.URL + "/raw"
 
 	cfg := &config.Config{
 		Sections:   map[string]config.Source{},
@@ -193,29 +330,11 @@ func TestResolveRejectsGitHubBundleWithoutRootSkillFile(t *testing.T) {
 	}
 }
 
-func TestResolveRejectsGitHubBundleTraversal(t *testing.T) {
-	archive := buildGitHubArchive(t, map[string]string{
-		"repo-main/skills/debug/SKILL.md":      "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n",
-		"repo-main/skills/debug/../escape.txt": "nope\n",
+func TestValidateSkillFilesRejectsUnsafeBundlePath(t *testing.T) {
+	err := validateSkillFiles([]model.File{
+		{Path: "SKILL.md", Body: "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"},
+		{Path: filepath.Join("..", "escape.txt"), Body: "nope\n"},
 	})
-	server := newRemoteTestServer(t, nil, map[string][]byte{
-		"/archive/owner/repo/tar.gz/main": archive,
-	})
-	defer server.Close()
-
-	loader := newRemoteLoader(server.Client())
-	loader.githubRawBaseURL = server.URL + "/raw"
-	loader.githubArchiveBaseURL = server.URL + "/archive"
-
-	cfg := &config.Config{
-		Sections:   map[string]config.Source{},
-		Commands:   map[string]config.Source{},
-		Agents:     map[string]config.Source{},
-		Skills:     map[string]config.Source{"debug": {GitHub: &config.GitSource{Repo: "owner/repo", Ref: "main", Path: "skills/debug"}}},
-		SkillOrder: []string{"debug"},
-	}
-
-	_, err := resolveWithLoader(t.TempDir(), cfg, loader)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -240,29 +359,207 @@ func newRemoteTestServer(t *testing.T, text map[string]string, blobs map[string]
 	}))
 }
 
-func buildGitHubArchive(t *testing.T, files map[string]string) []byte {
+func installFakeGit(t *testing.T, scenario string) string {
 	t.Helper()
 
-	var gz bytes.Buffer
-	zw := gzip.NewWriter(&gz)
-	tw := tar.NewWriter(zw)
-	for name, body := range files {
-		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatalf("write tar header: %v", err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatalf("write tar body: %v", err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "git.log")
+	gitPath := filepath.Join(binDir, "git")
+	script := `#!/bin/sh
+set -eu
+
+bundle_dir() {
+	printf '%s' "${AGENTSPEC_GIT_BUNDLE_DIR:-skills/debug}"
+}
+
+requested_path() {
+	last=""
+	for arg in "$@"; do
+		last="$arg"
+	done
+	last=${last#':(literal)'}
+	printf '%s' "$last"
+}
+
+write_valid_bundle() {
+	bundle_dir=$(bundle_dir)
+	mkdir -p "$1/$bundle_dir/notes"
+	cat > "$1/$bundle_dir/SKILL.md" <<'EOF'
+---
+name: debug
+description: Debug skill
+---
+
+# Debug
+EOF
+	cat > "$1/$bundle_dir/notes/guide.md" <<'EOF'
+Guide
+EOF
+}
+
+write_missing_root_bundle() {
+	bundle_dir=$(bundle_dir)
+	mkdir -p "$1/$bundle_dir/notes"
+	cat > "$1/$bundle_dir/notes/guide.md" <<'EOF'
+Guide
+EOF
+}
+
+print_entry() {
+	printf '%s %s %s\t%s\0' "$1" "$2" "$3" "$4"
+}
+
+ls_tree_single() {
+	path="$1"
+	case "${AGENTSPEC_GIT_SCENARIO:-bundle}" in
+		bundle|missing-root)
+			if [ "$path" = "$(bundle_dir)" ]; then
+				print_entry 040000 tree tree-obj "$path"
+			fi
+			;;
+		file)
+			file_path="${AGENTSPEC_GIT_FILE_PATH:-skills/debug.md}"
+			if [ "$path" = "$file_path" ]; then
+				print_entry 100644 blob file-obj "$path"
+			fi
+			;;
+		esac
+}
+
+ls_tree_recursive() {
+	path="$1"
+	bundle_dir=$(bundle_dir)
+	if [ "$path" != "$bundle_dir" ]; then
+		return
+	fi
+
+	case "${AGENTSPEC_GIT_SCENARIO:-bundle}" in
+		bundle)
+			print_entry 100644 blob skill-obj "$bundle_dir/SKILL.md"
+			print_entry 100644 blob guide-obj "$bundle_dir/notes/guide.md"
+			;;
+		missing-root)
+			print_entry 100644 blob guide-obj "$bundle_dir/notes/guide.md"
+			;;
+		esac
+}
+
+blob_body() {
+	case "$1" in
+		skill-obj|file-obj)
+			cat <<'EOF'
+---
+name: debug
+description: Debug skill
+---
+
+# Debug
+EOF
+			;;
+		guide-obj)
+			cat <<'EOF'
+Guide
+EOF
+			;;
+		esac
+}
+
+write_bundle() {
+	case "${AGENTSPEC_GIT_SCENARIO:-bundle}" in
+		bundle)
+			write_valid_bundle "$1"
+			;;
+		missing-root)
+			write_missing_root_bundle "$1"
+			;;
+		esac
+}
+
+require_fetch_flags() {
+	case " $* " in
+		*" --depth 1 "*) ;;
+		*)
+			echo "missing --depth 1" >&2
+			exit 91
+			;;
+	esac
+	case "${GIT_LFS_SKIP_SMUDGE:-}" in
+		1) ;;
+		*)
+			echo "missing GIT_LFS_SKIP_SMUDGE=1" >&2
+			exit 92
+			;;
+	esac
+	case " $* " in
+		*" --filter=blob:none "*) ;;
+		*)
+			echo "missing --filter=blob:none" >&2
+			exit 93
+			;;
+	esac
+}
+
+repo_dir="$PWD"
+if [ "${1:-}" = "-C" ]; then
+	repo_dir="$2"
+	shift 2
+fi
+
+cmd="${1:-}"
+if [ -n "$cmd" ]; then
+	shift
+fi
+
+printf 'dir=%s lfs=%s cmd=%s args=%s\n' "$repo_dir" "${GIT_LFS_SKIP_SMUDGE:-}" "$cmd" "$*" >> "$AGENTSPEC_GIT_LOG"
+
+if [ "${AGENTSPEC_GIT_SCENARIO:-}" = "sleep" ]; then
+	sleep "${AGENTSPEC_GIT_SLEEP:-1}"
+fi
+
+case "$cmd" in
+	init)
+		target=""
+		for arg in "$@"; do
+			target="$arg"
+		done
+		mkdir -p "$target"
+		;;
+	remote)
+		;;
+	fetch)
+		require_fetch_flags "$*"
+		;;
+	ls-tree)
+		path=$(requested_path "$@")
+		recursive=0
+		for arg in "$@"; do
+			if [ "$arg" = "-r" ]; then
+				recursive=1
+			fi
+		done
+		if [ "$recursive" = "1" ]; then
+			ls_tree_recursive "$path"
+		else
+			ls_tree_single "$path"
+		fi
+		;;
+	cat-file)
+		blob_body "${2:-}"
+		;;
+	checkout)
+		write_bundle "$repo_dir"
+		;;
+	esac
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
 	}
 
-	return gz.Bytes()
+	t.Setenv("AGENTSPEC_GIT_LOG", logPath)
+	t.Setenv("AGENTSPEC_GIT_SCENARIO", scenario)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	return logPath
 }
 
 func TestNewRemoteLoaderSetsDefaults(t *testing.T) {
@@ -283,6 +580,12 @@ func TestNewRemoteLoaderSetsDefaults(t *testing.T) {
 
 	if client.Timeout != defaultHTTPTimeout {
 		t.Fatalf("got timeout %v, want %v", client.Timeout, defaultHTTPTimeout)
+	}
+}
+
+func TestGitCommandDefaultTimeoutExceedsHTTPTimeout(t *testing.T) {
+	if defaultGitTimeout <= defaultHTTPTimeout {
+		t.Fatalf("got git timeout %v, want greater than http timeout %v", defaultGitTimeout, defaultHTTPTimeout)
 	}
 }
 
@@ -319,6 +622,24 @@ func TestRemoteLoaderFetchHTTPRejectsOversizedBody(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("got error %q, want size limit", err)
+	}
+}
+
+func TestRunGitCommandTimesOut(t *testing.T) {
+	installFakeGit(t, "sleep")
+	t.Setenv("AGENTSPEC_GIT_TIMEOUT", "20ms")
+	t.Setenv("AGENTSPEC_GIT_SLEEP", "1")
+
+	start := time.Now()
+	err := runGitCommand("", nil, "fetch", "--depth", "1", "origin", "main")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("got error %q, want timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("git timeout took %v, want under %v", elapsed, 500*time.Millisecond)
 	}
 }
 
@@ -415,6 +736,78 @@ func TestResolveLoadsDirectorySkillBundle(t *testing.T) {
 
 	if res.Skills[0].Files[1].Path != filepath.Join("notes", "guide.md") {
 		t.Fatalf("got second skill file %q, want %q", res.Skills[0].Files[1].Path, filepath.Join("notes", "guide.md"))
+	}
+}
+
+func TestResolveRejectsDirectorySkillBundleWithSymlinkEntry(t *testing.T) {
+	dir := t.TempDir()
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
+	target := filepath.Join(dir, "guide.md")
+	if err := os.MkdirAll(filepath.Join(skill, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("Guide\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(skill, "notes", "guide.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	_, err = Resolve(dir, cfg)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink bundle path") {
+		t.Fatalf("got error %q, want symlink bundle path", err)
+	}
+}
+
+func TestResolveRejectsDirectorySkillBundleWithNonRegularEntry(t *testing.T) {
+	dir := t.TempDir()
+	skill := filepath.Join(dir, ".agentspec", "skills", "debug")
+	if err := os.MkdirAll(filepath.Join(skill, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", filepath.Join(skill, "notes", "guide.sock"))
+	if err != nil {
+		t.Skipf("unix sockets unavailable: %v", err)
+	}
+	defer listener.Close()
+
+	raw := []byte("sections: {}\ncommands: {}\nagents: {}\nskills:\n  debug:\n    path: ./.agentspec/skills/debug\n")
+	path := filepath.Join(dir, "agentspec.yaml")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	_, err = Resolve(dir, cfg)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-regular bundle path") {
+		t.Fatalf("got error %q, want non-regular bundle path", err)
 	}
 }
 

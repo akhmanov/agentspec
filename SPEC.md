@@ -92,12 +92,17 @@ Initial target flags:
 
 - `agentspec plan --opencode`
 
+Optional flags:
+
+- `--verbose` to expand the same computed change set with one path per line and conflict reasons
+
 Constraints:
 
 - target-specific rendering only
 - no writes to workspace files or state
 - no silent rewriting of foreign files
 - surface ownership conflicts clearly
+- default output groups creates, updates, deletes, and conflicts into compact preview lines
 
 ### `agentspec apply`
 
@@ -231,8 +236,16 @@ skills:
 Fields:
 
 - `repo`: `owner/repo`
-- `ref`: pinned branch, tag, or commit-ish
+- `ref`: branch, tag, or commit-ish
 - `path`: path inside the repo
+
+Behavior:
+
+- use an immutable commit SHA when you need a pinned, reproducible GitHub reference
+- `sections`, `commands`, `agents`, and single-file `skills` read the selected file at `path`
+- directory-backed `skills` resolve the selected bundle path from the GitHub repo, using a shallow checkout when needed to read only that subtree
+- directory-backed GitHub skill bundles require a local `git` binary in `PATH`; single-file GitHub resources do not
+- directory-backed GitHub skill bundles must pass the same root `SKILL.md` and safe-path validation as local skill bundles
 
 `gitlab` is deferred from the current v1 slice and is not part of the supported selector set for the current CLI.
 
@@ -340,6 +353,7 @@ Shape:
 - `path`, `github`:
   - if resolved path is a file, save only that file
   - if resolved path is a directory, import the bundle
+  - GitHub bundle imports keep the same validation rules as local bundle imports
 
 Examples:
 

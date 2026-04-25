@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -193,4 +195,63 @@ func TestLoadRejectsUnsafeResourceID(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid resource id") {
 		t.Fatalf("got error %q, want invalid resource id", err)
 	}
+}
+
+func TestLoadParsesCommittedGitHubSmokeExample(t *testing.T) {
+	root := repoRoot(t)
+	readmePath := filepath.Join(root, "example", "github-smoke", "README.md")
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read github smoke README: %v", err)
+	}
+	if !strings.Contains(string(readme), "upstream") {
+		t.Fatalf("expected upstream note in README, got %q", string(readme))
+	}
+
+	cfg, err := Load(filepath.Join(root, "example", "github-smoke", "agentspec.yaml"))
+	if err != nil {
+		t.Fatalf("load github smoke config: %v", err)
+	}
+
+	section := cfg.Sections["humanizer-readme"]
+	if section.GitHub == nil {
+		t.Fatal("expected GitHub-backed file resource for humanizer-readme")
+	}
+	if section.GitHub.Repo == "" {
+		t.Fatal("expected section GitHub repo")
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(section.GitHub.Ref) {
+		t.Fatalf("got section ref %q, want pinned commit sha", section.GitHub.Ref)
+	}
+	if got := section.GitHub.Path; got != "README.md" {
+		t.Fatalf("got section path %q, want %q", got, "README.md")
+	}
+
+	skill := cfg.Skills["dev-browser"]
+	if skill.GitHub == nil {
+		t.Fatal("expected GitHub-backed skill bundle for dev-browser")
+	}
+	if skill.GitHub.Repo == "" {
+		t.Fatal("expected skill GitHub repo")
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(skill.GitHub.Ref) {
+		t.Fatalf("got skill ref %q, want pinned commit sha", skill.GitHub.Ref)
+	}
+	if got := skill.GitHub.Path; got != "skills/dev-browser" {
+		t.Fatalf("got skill path %q, want %q", got, "skills/dev-browser")
+	}
+	if strings.HasSuffix(skill.GitHub.Path, "SKILL.md") {
+		t.Fatalf("expected directory-backed skill path, got %q", skill.GitHub.Path)
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }

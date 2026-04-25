@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	adapter "agentspec/internal/adapter/opencode"
 	"agentspec/internal/config"
@@ -39,6 +40,7 @@ func newCommand() *cli.Command {
 				Usage: "preview workspace changes for a target",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "opencode"},
+					&cli.BoolFlag{Name: "verbose"},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					return runPlan(cmd)
@@ -74,7 +76,7 @@ func runPlan(cmd *cli.Command) error {
 		return err
 	}
 
-	printPlan(plan)
+	printPlan(plan, cmd.Bool("verbose"))
 	return nil
 }
 
@@ -123,16 +125,49 @@ func loadDesired(target string) (string, *model.Desired, error) {
 	return root, adapter.Build(res), nil
 }
 
-func printPlan(plan *awsync.Plan) {
+func printPlan(plan *awsync.Plan, verbose bool) {
 	if len(plan.Changes) == 0 && len(plan.Conflicts) == 0 {
 		fmt.Println("No managed changes.")
 		return
 	}
 
-	for _, item := range plan.Changes {
-		fmt.Printf("%s %s\n", item.Kind, item.Path)
+	for _, kind := range []awsync.ChangeKind{awsync.Create, awsync.Update, awsync.Delete} {
+		paths := []string{}
+		for _, item := range plan.Changes {
+			if item.Kind == kind {
+				paths = append(paths, item.Path)
+			}
+		}
+		if len(paths) == 0 {
+			continue
+		}
+
+		if verbose {
+			fmt.Printf("%s (%d):\n", kind, len(paths))
+			for _, path := range paths {
+				fmt.Printf("  - %s\n", path)
+			}
+			continue
+		}
+
+		fmt.Printf("%s (%d): %s\n", kind, len(paths), strings.Join(paths, ", "))
 	}
+
+	if len(plan.Conflicts) == 0 {
+		return
+	}
+
+	if verbose {
+		fmt.Printf("conflict (%d):\n", len(plan.Conflicts))
+		for _, item := range plan.Conflicts {
+			fmt.Printf("  - %s: %s\n", item.Path, item.Reason)
+		}
+		return
+	}
+
+	paths := make([]string, 0, len(plan.Conflicts))
 	for _, item := range plan.Conflicts {
-		fmt.Printf("conflict %s: %s\n", item.Path, item.Reason)
+		paths = append(paths, item.Path)
 	}
+	fmt.Printf("conflict (%d): %s\n", len(plan.Conflicts), strings.Join(paths, ", "))
 }

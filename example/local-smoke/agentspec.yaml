@@ -1,0 +1,10 @@
+sections:
+  workspace-core:
+    path: ./resources/sections/workspace-core.md
+commands:
+  explore:
+    path: ./resources/commands/explore.md
+agents: {}
+skills:
+  local-audit:
+    path: ./resources/skills/local-audit

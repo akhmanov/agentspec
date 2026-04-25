@@ -1,9 +1,8 @@
 package resolve
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	pathpkg "path"
 	"path/filepath"
 	"sort"
@@ -24,6 +24,7 @@ import (
 
 const (
 	defaultHTTPTimeout = 10 * time.Second
+	defaultGitTimeout  = 30 * time.Second
 	defaultMaxBytes    = 1 << 20
 )
 
@@ -32,11 +33,13 @@ type httpDoer interface {
 }
 
 type remoteLoader struct {
-	client               httpDoer
-	maxBytes             int64
-	httpBaseURL          string
-	githubRawBaseURL     string
-	githubArchiveBaseURL string
+	client             httpDoer
+	maxBytes           int64
+	httpBaseURL        string
+	githubRawBaseURL   string
+	githubCloneBaseURL string
+	runGit             func(dir string, env []string, args ...string) error
+	runGitOutput       func(dir string, env []string, args ...string) ([]byte, error)
 }
 
 type statusError struct {
@@ -50,21 +53,38 @@ type skillMeta struct {
 	Description string `yaml:"description"`
 }
 
+type gitTreeEntry struct {
+	Mode   string
+	Type   string
+	Object string
+	Path   string
+}
+
+type notDirectoryError struct {
+	path string
+}
+
 func newRemoteLoader(client httpDoer) *remoteLoader {
 	if client == nil {
 		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
 	return &remoteLoader{
-		client:               client,
-		maxBytes:             defaultMaxBytes,
-		githubRawBaseURL:     "https://raw.githubusercontent.com",
-		githubArchiveBaseURL: "https://codeload.github.com",
+		client:             client,
+		maxBytes:           defaultMaxBytes,
+		githubRawBaseURL:   "https://raw.githubusercontent.com",
+		githubCloneBaseURL: "https://github.com",
+		runGit:             runGitCommand,
+		runGitOutput:       runGitCommandOutput,
 	}
 }
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("fetch http %q: unexpected status %s", e.url, e.status)
+}
+
+func (e *notDirectoryError) Error() string {
+	return fmt.Sprintf("skill path %q: not a directory", e.path)
 }
 
 func (r *remoteLoader) fetchHTTP(addr string) ([]byte, error) {
@@ -103,15 +123,6 @@ func (r *remoteLoader) fetchGitHubFile(src *config.GitSource) ([]byte, error) {
 	return r.fetchHTTP(addr)
 }
 
-func (r *remoteLoader) fetchGitHubArchive(src *config.GitSource) ([]byte, error) {
-	addr, err := r.githubArchiveURL(src)
-	if err != nil {
-		return nil, err
-	}
-
-	return r.fetchHTTP(addr)
-}
-
 func (r *remoteLoader) githubFileURL(src *config.GitSource) (string, error) {
 	base, err := url.Parse(r.githubRawBaseURL)
 	if err != nil {
@@ -121,12 +132,12 @@ func (r *remoteLoader) githubFileURL(src *config.GitSource) (string, error) {
 	return base.String(), nil
 }
 
-func (r *remoteLoader) githubArchiveURL(src *config.GitSource) (string, error) {
-	base, err := url.Parse(r.githubArchiveBaseURL)
+func (r *remoteLoader) githubCloneURL(src *config.GitSource) (string, error) {
+	base, err := url.Parse(r.githubCloneBaseURL)
 	if err != nil {
-		return "", fmt.Errorf("parse github archive base url: %w", err)
+		return "", fmt.Errorf("parse github clone base url: %w", err)
 	}
-	base.Path = pathpkg.Join(base.Path, src.Repo, "tar.gz", src.Ref)
+	base.Path = pathpkg.Join(base.Path, src.Repo+".git")
 	return base.String(), nil
 }
 
@@ -256,23 +267,169 @@ func resolveSkillFiles(root string, src config.Source, loader *remoteLoader) ([]
 		return resolveGitHubSkillFiles(src.GitHub, loader)
 	}
 
-	full := resolvePath(root, src.Path)
+	return readSkillFiles(resolvePath(root, src.Path), src.Path)
+}
+
+func resolveGitHubSkillFiles(src *config.GitSource, loader *remoteLoader) ([]model.File, error) {
+	raw, err := loader.fetchGitHubFile(src)
+	if err == nil {
+		return []model.File{{Path: "SKILL.md", Body: string(raw)}}, nil
+	}
+	if !notFound(err) {
+		return nil, err
+	}
+	rawErr := err
+
+	files, err := loader.fetchGitHubBundle(src)
+	if err != nil {
+		var notDir *notDirectoryError
+		if errors.As(err, &notDir) {
+			return nil, rawErr
+		}
+		return nil, fmt.Errorf("github skill path %q: %w", src.Path, err)
+	}
+
+	return files, nil
+}
+
+func (r *remoteLoader) fetchGitHubBundle(src *config.GitSource) ([]model.File, error) {
+	repoDir, cleanup, err := r.fetchGitHubRepo(src)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	entry, err := r.gitTreeEntry(repoDir, src.Path)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil || entry.Mode != "040000" || entry.Type != "tree" {
+		return nil, &notDirectoryError{path: src.Path}
+	}
+
+	return r.readGitBundleFiles(repoDir, src.Path)
+}
+
+func (r *remoteLoader) fetchGitHubRepo(src *config.GitSource) (string, func(), error) {
+	repoURL, err := r.githubCloneURL(src)
+	if err != nil {
+		return "", nil, err
+	}
+
+	tmp, err := os.MkdirTemp("", "agentspec-github-skill-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp repo dir: %w", err)
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tmp)
+	}
+
+	repoDir := filepath.Join(tmp, "repo")
+	env := []string{"GIT_LFS_SKIP_SMUDGE=1"}
+	if err := r.runGit("", env, "init", repoDir); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := r.runGit(repoDir, env, "remote", "add", "origin", repoURL); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := r.runGit(repoDir, env, "fetch", "--depth", "1", "--filter=blob:none", "origin", src.Ref); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+
+	return repoDir, cleanup, nil
+}
+
+func (r *remoteLoader) gitTreeEntry(repoDir, remotePath string) (*gitTreeEntry, error) {
+	entries, err := r.gitTreeEntries(repoDir, remotePath, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	return &entries[0], nil
+}
+
+func (r *remoteLoader) gitTreeEntries(repoDir, remotePath string, recursive bool) ([]gitTreeEntry, error) {
+	args := []string{"ls-tree", "-z"}
+	if recursive {
+		args = append(args, "-r", "--full-tree")
+	}
+	args = append(args, "FETCH_HEAD", "--", literalGitPathspec(remotePath))
+
+	raw, err := r.runGitOutput(repoDir, []string{"GIT_LFS_SKIP_SMUDGE=1"}, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseGitTreeEntries(raw)
+}
+
+func (r *remoteLoader) readGitBundleFiles(repoDir, prefix string) ([]model.File, error) {
+	entries, err := r.gitTreeEntries(repoDir, prefix, true)
+	if err != nil {
+		return nil, err
+	}
+
+	files := []model.File{}
+	hasRoot := false
+	for _, entry := range entries {
+		rel, err := bundleRelativePath(entry.Path, prefix)
+		if err != nil {
+			return nil, err
+		}
+		if entry.Mode == "120000" {
+			return nil, fmt.Errorf("skill path %q: symlink bundle path %q", prefix, rel)
+		}
+		if entry.Type != "blob" || (entry.Mode != "100644" && entry.Mode != "100755") {
+			return nil, fmt.Errorf("skill path %q: non-regular bundle path %q", prefix, rel)
+		}
+
+		raw, err := r.runGitOutput(repoDir, []string{"GIT_LFS_SKIP_SMUDGE=1"}, "cat-file", "blob", entry.Object)
+		if err != nil {
+			return nil, fmt.Errorf("read skill file %q: %w", rel, err)
+		}
+		if rel == "SKILL.md" {
+			hasRoot = true
+		}
+		files = append(files, model.File{Path: filepath.FromSlash(rel), Body: string(raw)})
+	}
+
+	if !hasRoot {
+		return nil, fmt.Errorf("skill path %q: missing root SKILL.md", prefix)
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+
+	return files, nil
+}
+
+func readSkillFiles(full, label string) ([]model.File, error) {
 	info, err := os.Stat(full)
 	if err != nil {
-		return nil, fmt.Errorf("stat skill path %q: %w", src.Path, err)
+		return nil, fmt.Errorf("stat skill path %q: %w", label, err)
 	}
 
 	if !info.IsDir() {
 		raw, err := os.ReadFile(full)
 		if err != nil {
-			return nil, fmt.Errorf("read skill path %q: %w", src.Path, err)
+			return nil, fmt.Errorf("read skill path %q: %w", label, err)
 		}
 		return []model.File{{Path: "SKILL.md", Body: string(raw)}}, nil
 	}
 
+	return readSkillBundleDir(full, label)
+}
+
+func readSkillBundleDir(full, label string) ([]model.File, error) {
 	files := []model.File{}
 	paths := []string{}
-	err = filepath.WalkDir(full, func(child string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(full, func(child string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -288,12 +445,25 @@ func resolveSkillFiles(root string, src config.Source, loader *remoteLoader) ([]
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walk skill path %q: %w", src.Path, err)
+		return nil, fmt.Errorf("walk skill path %q: %w", label, err)
 	}
 
 	sort.Strings(paths)
 	hasRoot := false
 	for _, rel := range paths {
+		if !safeBundlePath(filepath.ToSlash(rel)) {
+			return nil, fmt.Errorf("skill path %q: unsafe bundle path %q", label, rel)
+		}
+		info, err := os.Lstat(filepath.Join(full, rel))
+		if err != nil {
+			return nil, fmt.Errorf("stat skill file %q: %w", rel, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("skill path %q: symlink bundle path %q", label, rel)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("skill path %q: non-regular bundle path %q", label, rel)
+		}
 		if rel == "SKILL.md" {
 			hasRoot = true
 		}
@@ -306,107 +476,23 @@ func resolveSkillFiles(root string, src config.Source, loader *remoteLoader) ([]
 	}
 
 	if !hasRoot {
-		return nil, fmt.Errorf("skill path %q: missing root SKILL.md", src.Path)
+		return nil, fmt.Errorf("skill path %q: missing root SKILL.md", label)
 	}
 
 	return files, nil
 }
 
-func resolveGitHubSkillFiles(src *config.GitSource, loader *remoteLoader) ([]model.File, error) {
-	raw, err := loader.fetchGitHubFile(src)
-	if err == nil {
-		return []model.File{{Path: "SKILL.md", Body: string(raw)}}, nil
-	}
-	if !notFound(err) {
-		return nil, err
+func bundleRelativePath(name, prefix string) (string, error) {
+	if !strings.HasPrefix(name, prefix+"/") {
+		return "", fmt.Errorf("skill path %q: unexpected bundle path %q", prefix, name)
 	}
 
-	archive, err := loader.fetchGitHubArchive(src)
-	if err != nil {
-		return nil, err
-	}
-
-	files, err := extractGitHubSkillBundle(archive, src.Path)
-	if err != nil {
-		return nil, fmt.Errorf("github skill path %q: %w", src.Path, err)
-	}
-
-	return files, nil
-}
-
-func extractGitHubSkillBundle(raw []byte, prefix string) ([]model.File, error) {
-	zr, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("open archive: %w", err)
-	}
-	defer zr.Close()
-
-	tr := tar.NewReader(zr)
-	prefix = pathpkg.Clean(prefix)
-	files := []model.File{}
-	hasRoot := false
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read archive entry: %w", err)
-		}
-		if hdr.FileInfo().IsDir() {
-			continue
-		}
-
-		rel, ok, err := bundlePath(hdr.Name, prefix)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-
-		body, err := io.ReadAll(tr)
-		if err != nil {
-			return nil, fmt.Errorf("read archive body %q: %w", hdr.Name, err)
-		}
-		if rel == "SKILL.md" {
-			hasRoot = true
-		}
-		files = append(files, model.File{Path: rel, Body: string(body)})
-	}
-	if !hasRoot {
-		return nil, fmt.Errorf("missing root SKILL.md")
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
-	})
-
-	return files, nil
-}
-
-func bundlePath(name, prefix string) (string, bool, error) {
-	parts := strings.SplitN(name, "/", 2)
-	if len(parts) != 2 {
-		return "", false, nil
-	}
-	rest := parts[1]
-	if !safeBundlePath(rest) {
-		return "", false, fmt.Errorf("unsafe bundle path %q", rest)
-	}
-	if rest == prefix {
-		return "SKILL.md", true, nil
-	}
-	if !strings.HasPrefix(rest, prefix+"/") {
-		return "", false, nil
-	}
-
-	rel := strings.TrimPrefix(rest, prefix+"/")
+	rel := strings.TrimPrefix(name, prefix+"/")
 	if !safeBundlePath(rel) {
-		return "", false, fmt.Errorf("unsafe bundle path %q", rel)
+		return "", fmt.Errorf("skill path %q: unsafe bundle path %q", prefix, rel)
 	}
 
-	return filepath.FromSlash(rel), true, nil
+	return rel, nil
 }
 
 func safeBundlePath(raw string) bool {
@@ -427,6 +513,12 @@ func notFound(err error) bool {
 
 func validateSkillFiles(files []model.File) error {
 	for _, file := range files {
+		if !safeBundlePath(filepath.ToSlash(file.Path)) {
+			return fmt.Errorf("unsafe bundle path %q", file.Path)
+		}
+	}
+
+	for _, file := range files {
 		if file.Path != "SKILL.md" {
 			continue
 		}
@@ -437,6 +529,73 @@ func validateSkillFiles(files []model.File) error {
 	}
 
 	return fmt.Errorf("invalid SKILL.md: missing root skill file")
+}
+
+func runGitCommand(dir string, env []string, args ...string) error {
+	_, err := runGitCommandOutput(dir, env, args...)
+	return err
+}
+
+func runGitCommandOutput(dir string, env []string, args ...string) ([]byte, error) {
+	timeout := defaultGitTimeout
+	if raw := os.Getenv("AGENTSPEC_GIT_TIMEOUT"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			timeout = parsed
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+
+	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("run git %q: timed out after %s", strings.Join(args, " "), timeout)
+	}
+	if err == nil {
+		return output, nil
+	}
+
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		return nil, fmt.Errorf("run git %q: %w", strings.Join(args, " "), err)
+	}
+	return nil, fmt.Errorf("run git %q: %w: %s", strings.Join(args, " "), err, msg)
+}
+
+func literalGitPathspec(path string) string {
+	return ":(literal)" + path
+}
+
+func parseGitTreeEntries(raw []byte) ([]gitTreeEntry, error) {
+	parts := bytes.Split(raw, []byte{0})
+	entries := make([]gitTreeEntry, 0, len(parts))
+	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+
+		meta, path, ok := bytes.Cut(part, []byte{'\t'})
+		if !ok {
+			return nil, fmt.Errorf("parse git tree entry %q: missing path separator", string(part))
+		}
+		fields := strings.Fields(string(meta))
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("parse git tree entry %q: unexpected metadata", string(part))
+		}
+
+		entries = append(entries, gitTreeEntry{
+			Mode:   fields[0],
+			Type:   fields[1],
+			Object: fields[2],
+			Path:   string(path),
+		})
+	}
+
+	return entries, nil
 }
 
 func validSkill(body string) bool {

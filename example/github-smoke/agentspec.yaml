@@ -1,0 +1,14 @@
+sections:
+  humanizer-readme:
+    github:
+      repo: blader/humanizer
+      ref: 8b3a17889fbf12bedae20974a3c9f9de746ed754
+      path: README.md
+commands: {}
+agents: {}
+skills:
+  dev-browser:
+    github:
+      repo: SawyerHood/dev-browser
+      ref: 9c85e469e213badb5c5ff96987553e6ff05df9f4
+      path: skills/dev-browser
