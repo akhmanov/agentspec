@@ -30,8 +30,8 @@ Core user flow:
 
 1. Create `agentspec.yaml` with `agentspec init`.
 2. Describe the desired workspace resources in `agentspec.yaml`.
-3. Run `agentspec plan --opencode` to preview managed changes.
-4. Run `agentspec apply --opencode` to materialize those changes.
+3. Run `agentspec plan --target opencode` to preview managed changes.
+4. Run `agentspec apply --target opencode` to materialize those changes.
 5. Get a predictable, target-specific workspace surface with only `agentspec`-owned parts updated.
 
 ## Non-Goals
@@ -78,6 +78,16 @@ The first three are single-document resources. `skills` are the only special-cas
 
 Creates a starter `agentspec.yaml`.
 
+Global execution-context flags:
+
+- `--root <dir>` to choose the workspace root used for default config discovery, output paths, and state
+- `--config <path>` to choose the config file path explicitly
+
+Environment fallbacks:
+
+- `AGENTSPEC_ROOT`
+- `AGENTSPEC_CONFIG`
+
 Constraints:
 
 - no aggressive discovery
@@ -88,9 +98,11 @@ Constraints:
 
 Previews the managed workspace changes for a supported target.
 
-Initial target flags:
+Target selection:
 
-- `agentspec plan --opencode`
+- `agentspec plan --target opencode`
+- `agentspec plan --target claude-code`
+- `--target` is repeatable
 
 Optional flags:
 
@@ -103,14 +115,17 @@ Constraints:
 - no silent rewriting of foreign files
 - surface ownership conflicts clearly
 - default output groups creates, updates, deletes, and conflicts into compact preview lines
+- if multiple targets are selected, output stays grouped by target
 
 ### `agentspec apply`
 
 Materializes the desired workspace state for a supported target.
 
-Initial target flags:
+Target selection:
 
-- `agentspec apply --opencode`
+- `agentspec apply --target opencode`
+- `agentspec apply --target claude-code`
+- `--target` is repeatable
 
 Constraints:
 
@@ -119,6 +134,7 @@ Constraints:
 - delete only `agentspec`-owned orphaned files
 - update only `agentspec` markers inside instruction files
 - recompute current desired state instead of consuming a saved plan artifact
+- multiple targets apply sequentially in the order requested, with separate state per target and no cross-target rollback
 
 ### Deferred CLI Surface
 
@@ -201,7 +217,7 @@ Rules:
 
 ### `path`
 
-Filesystem path relative to the project root or absolute path.
+Filesystem path relative to the loaded config file or absolute path.
 
 For `sections`, `commands`, and `agents`, `path` points to one file.
 
@@ -382,8 +398,8 @@ skills:
 
 Materialization rules:
 
-- single-file skill -> write as `.agents/skills/<id>/SKILL.md`
-- directory skill -> write full bundle under `.agents/skills/<id>/...`
+- single-file skill -> write as a target-native `SKILL.md` bundle root
+- directory skill -> write full bundle under the target-native skill directory for that adapter
 
 Validation rules:
 
@@ -396,18 +412,30 @@ Schema stays mostly target-neutral. Rendering is target-specific.
 
 ### OpenCode Adapter
 
-OpenCode is the only supported target in the current v1 slice.
+Supported targets in the current v1 slice:
+
+- OpenCode
+- Claude Code
 
 Responsibilities:
 
 - materialize `sections` into managed sections inside the primary instruction file
 - materialize `commands` into `.opencode/commands/<id>.md`
 - materialize `agents` into `.opencode/agents/<id>.md`
-- materialize `skills` into `.agents/skills/<id>/...`
+- materialize `skills` into `.opencode/skills/<id>/...`
+
+### Claude Code Adapter
+
+Responsibilities:
+
+- materialize `sections` into managed sections inside `CLAUDE.md`
+- materialize `commands` into `.claude/commands/<id>.md`
+- materialize `agents` into `.claude/agents/<id>.md`
+- materialize `skills` into `.claude/skills/<id>/...`
 
 ### Deferred Targets
 
-Additional targets such as Claude Code are deferred from the current v1 slice.
+Additional targets beyond OpenCode and Claude Code are deferred from the current v1 slice.
 
 When future target work is added, it should:
 
@@ -455,7 +483,10 @@ Examples:
 
 - materialized `.opencode/commands/*.md`
 - materialized `.opencode/agents/*.md`
-- materialized `.agents/skills/<id>/...`
+- materialized `.opencode/skills/<id>/...`
+- materialized `.claude/commands/*.md`
+- materialized `.claude/agents/*.md`
+- materialized `.claude/skills/<id>/...`
 - persisted `.agentspec/state/<target>.json`
 
 Ownership policy:
@@ -550,8 +581,8 @@ Key boundary:
 v1 is successful when:
 
 - a developer can describe a workspace using one `agentspec.yaml`
-- `agentspec plan --opencode` can safely preview managed changes without writing files or state
-- `agentspec apply --opencode` can safely materialize the agreed resources
+- `agentspec plan --target <target>` can safely preview managed changes without writing files or state
+- `agentspec apply --target <target>` can safely materialize the agreed resources
 - only `agentspec`-owned files are updated or deleted
 - only `agentspec` markers are modified in instruction files
 - the resulting schema stays readable without hidden modes or a mini DSL
@@ -569,7 +600,6 @@ These are intentionally deferred and not required for v1:
 - multi-file inline skills
 - multi-file commands or agents
 - direct support for additional source kinds such as `gitlab`
-- additional targets such as Claude Code
 
 ## Why This Direction
 

@@ -1,4 +1,4 @@
-package opencode
+package claudecode
 
 import (
 	"path/filepath"
@@ -7,7 +7,7 @@ import (
 	"agentspec/internal/model"
 )
 
-func TestBuildRendersOpenCodePaths(t *testing.T) {
+func TestBuildRendersClaudeCodePaths(t *testing.T) {
 	res := &model.Resolved{
 		Sections: []model.Document{{ID: "core", Body: "Core rules\n"}},
 		Commands: []model.Document{{ID: "explore", Body: "Explore\n"}},
@@ -26,11 +26,9 @@ func TestBuildRendersOpenCodePaths(t *testing.T) {
 	if len(des.Sections) != 1 {
 		t.Fatalf("got %d sections, want %d", len(des.Sections), 1)
 	}
-
-	if des.Sections[0].Path != "AGENTS.md" {
-		t.Fatalf("got section path %q, want %q", des.Sections[0].Path, "AGENTS.md")
+	if des.Sections[0].Path != "CLAUDE.md" {
+		t.Fatalf("got section path %q, want %q", des.Sections[0].Path, "CLAUDE.md")
 	}
-
 	if des.Sections[0].ID != "core" {
 		t.Fatalf("got section id %q, want %q", des.Sections[0].ID, "core")
 	}
@@ -40,10 +38,10 @@ func TestBuildRendersOpenCodePaths(t *testing.T) {
 	}
 
 	want := []string{
-		filepath.Join(".opencode", "commands", "explore.md"),
-		filepath.Join(".opencode", "agents", "reviewer.md"),
-		filepath.Join(".opencode", "skills", "debug", "SKILL.md"),
-		filepath.Join(".opencode", "skills", "debug", "notes", "guide.md"),
+		filepath.Join(".claude", "commands", "explore.md"),
+		filepath.Join(".claude", "agents", "reviewer.md"),
+		filepath.Join(".claude", "skills", "debug", "SKILL.md"),
+		filepath.Join(".claude", "skills", "debug", "notes", "guide.md"),
 	}
 
 	for i, path := range want {

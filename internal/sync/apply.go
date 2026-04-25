@@ -40,6 +40,12 @@ type sectionState struct {
 	ID   string `json:"id"`
 }
 
+type targetLayout struct {
+	sectionPath string
+	roots       []string
+	legacyRoots []string
+}
+
 type ChangeKind string
 
 const (
@@ -264,8 +270,12 @@ func loadState(root, target string) (state, error) {
 	if err != nil {
 		return state{}, fmt.Errorf("read state: %w", err)
 	}
+	layout, err := stateLayout(target)
+	if err != nil {
+		return state{}, err
+	}
 
-	st, err := parseState(path, raw, currentOwner, currentStateVersion)
+	st, err := parseState(path, raw, currentOwner, currentStateVersion, layout)
 	if err != nil {
 		return state{}, err
 	}
@@ -295,7 +305,7 @@ func statePath(root, target string) string {
 	return filepath.Join(root, currentStateDirName, "state", target+".json")
 }
 
-func parseState(path string, raw []byte, owner string, version int) (state, error) {
+func parseState(path string, raw []byte, owner string, version int, layout targetLayout) (state, error) {
 	var st state
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return state{}, fmt.Errorf("parse state: %w", err)
@@ -304,7 +314,7 @@ func parseState(path string, raw []byte, owner string, version int) (state, erro
 		return state{}, fmt.Errorf("foreign state file at %q", path)
 	}
 	for _, file := range st.Files {
-		if !validStateFile(file.Path) {
+		if !validStateFile(file.Path, layout) {
 			return state{}, fmt.Errorf("invalid state file path %q", file.Path)
 		}
 		if !validHash.MatchString(file.Hash) {
@@ -312,12 +322,40 @@ func parseState(path string, raw []byte, owner string, version int) (state, erro
 		}
 	}
 	for _, section := range st.Sections {
-		if !validStateSection(section) {
+		if !validStateSection(section, layout) {
 			return state{}, fmt.Errorf("invalid state section path %q", section.Path)
 		}
 	}
 
 	return st, nil
+}
+
+func stateLayout(target string) (targetLayout, error) {
+	switch target {
+	case "opencode":
+		return targetLayout{
+			sectionPath: "AGENTS.md",
+			roots: []string{
+				filepath.Join(".opencode", "commands") + string(filepath.Separator),
+				filepath.Join(".opencode", "agents") + string(filepath.Separator),
+				filepath.Join(".opencode", "skills") + string(filepath.Separator),
+			},
+			legacyRoots: []string{
+				filepath.Join(".agents", "skills") + string(filepath.Separator),
+			},
+		}, nil
+	case "claude-code":
+		return targetLayout{
+			sectionPath: "CLAUDE.md",
+			roots: []string{
+				filepath.Join(".claude", "commands") + string(filepath.Separator),
+				filepath.Join(".claude", "agents") + string(filepath.Separator),
+				filepath.Join(".claude", "skills") + string(filepath.Separator),
+			},
+		}, nil
+	default:
+		return targetLayout{}, fmt.Errorf("unsupported target %q", target)
+	}
 }
 
 func upsertSection(raw string, section model.Section) string {
@@ -466,7 +504,7 @@ func pruneDirs(root, dir string) {
 	}
 }
 
-func validStateFile(path string) bool {
+func validStateFile(path string, layout targetLayout) bool {
 	if path == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -479,11 +517,8 @@ func validStateFile(path string) bool {
 		return false
 	}
 
-	roots := []string{
-		filepath.Join(".opencode", "commands") + string(filepath.Separator),
-		filepath.Join(".opencode", "agents") + string(filepath.Separator),
-		filepath.Join(".agents", "skills") + string(filepath.Separator),
-	}
+	roots := append([]string{}, layout.roots...)
+	roots = append(roots, layout.legacyRoots...)
 	for _, root := range roots {
 		if strings.HasPrefix(clean, root) {
 			return true
@@ -493,8 +528,8 @@ func validStateFile(path string) bool {
 	return false
 }
 
-func validStateSection(section sectionState) bool {
-	return section.Path == "AGENTS.md" && validID.MatchString(section.ID)
+func validStateSection(section sectionState, layout targetLayout) bool {
+	return section.Path == layout.sectionPath && validID.MatchString(section.ID)
 }
 
 func hashText(body string) string {

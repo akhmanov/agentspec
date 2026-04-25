@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	pathpkg "path"
 	"regexp"
 	"strings"
@@ -37,6 +38,7 @@ type Config struct {
 	CommandOrder []string          `yaml:"-"`
 	AgentOrder   []string          `yaml:"-"`
 	SkillOrder   []string          `yaml:"-"`
+	BaseDir      string            `yaml:"-"`
 }
 
 func Load(path string) (*Config, error) {
@@ -67,6 +69,7 @@ func Load(path string) (*Config, error) {
 	if cfg.Skills == nil {
 		cfg.Skills = map[string]Source{}
 	}
+	cfg.BaseDir = filepath.Dir(path)
 
 	cfg.SectionOrder = orderedKeys(&node, "sections")
 	cfg.CommandOrder = orderedKeys(&node, "commands")

@@ -66,6 +66,167 @@ func TestInitWritesStarterConfig(t *testing.T) {
 	}
 }
 
+func TestInitWritesStarterConfigToExplicitRoot(t *testing.T) {
+	workRoot := t.TempDir()
+	runDir := t.TempDir()
+
+	_, err := runCommand(t, runDir, []string{"agentspec", "--root", workRoot, "init"})
+	if err != nil {
+		t.Fatalf("run init with root: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(workRoot, "agentspec.yaml"))
+	if err != nil {
+		t.Fatalf("read rooted agentspec.yaml: %v", err)
+	}
+
+	want := "sections: {}\ncommands: {}\nagents: {}\nskills: {}\n"
+	if string(raw) != want {
+		t.Fatalf("got config %q, want %q", string(raw), want)
+	}
+}
+
+func TestPlanUsesExplicitRootAndRelativeConfig(t *testing.T) {
+	workRoot := t.TempDir()
+	runDir := t.TempDir()
+
+	writeWorkspaceFile(t, filepath.Join(workRoot, "config", "dev", "agentspec.yaml"), strings.Join([]string{
+		"sections:",
+		"  core:",
+		"    inline: |",
+		"      Core rules",
+		"commands:",
+		"  explore:",
+		"    inline: |",
+		"      Explore",
+		"agents: {}",
+		"skills: {}",
+		"",
+	}, "\n"))
+
+	out, err := runCommand(t, runDir, []string{"agentspec", "--root", workRoot, "--config", filepath.Join("config", "dev", "agentspec.yaml"), "plan", "--target", "opencode"})
+	if err != nil {
+		t.Fatalf("run plan with explicit context: %v", err)
+	}
+
+	if out != compactGroup("create", commandPath("explore"), "AGENTS.md#core") {
+		t.Fatalf("got plan output %q", out)
+	}
+}
+
+func TestPlanUsesEnvironmentFallbacksForRootAndConfig(t *testing.T) {
+	workRoot := t.TempDir()
+	runDir := t.TempDir()
+
+	writeWorkspaceFile(t, filepath.Join(workRoot, "ops", "agentspec.yaml"), strings.Join([]string{
+		"sections:",
+		"  core:",
+		"    inline: |",
+		"      Core rules",
+		"commands:",
+		"  explore:",
+		"    inline: |",
+		"      Explore",
+		"agents: {}",
+		"skills: {}",
+		"",
+	}, "\n"))
+
+	t.Setenv("AGENTSPEC_ROOT", workRoot)
+	t.Setenv("AGENTSPEC_CONFIG", filepath.Join("ops", "agentspec.yaml"))
+
+	out, err := runCommand(t, runDir, []string{"agentspec", "plan", "--target", "opencode"})
+	if err != nil {
+		t.Fatalf("run plan with env context: %v", err)
+	}
+
+	if out != compactGroup("create", commandPath("explore"), "AGENTS.md#core") {
+		t.Fatalf("got plan output %q", out)
+	}
+}
+
+func TestPlanRequiresAtLeastOneTarget(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections: {}\ncommands: {}\nagents: {}\nskills: {}\n")
+
+	_, err := runCommand(t, dir, []string{"agentspec", "plan"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "target flag") {
+		t.Fatalf("got error %q, want target flag context", err)
+	}
+}
+
+func TestPlanGroupsMultipleTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    inline: |\n      Explore\nagents: {}\nskills: {}\n")
+
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode", "--target", "claude-code"})
+	if err != nil {
+		t.Fatalf("run multi-target plan: %v", err)
+	}
+
+	want := strings.Join([]string{
+		"opencode:",
+		strings.TrimSuffix(compactGroup("create", filepath.Join(".opencode", "commands", "explore.md"), "AGENTS.md#core"), "\n"),
+		"",
+		"claude-code:",
+		strings.TrimSuffix(compactGroup("create", filepath.Join(".claude", "commands", "explore.md"), "CLAUDE.md#core"), "\n"),
+		"",
+	}, "\n")
+	if out != want {
+		t.Fatalf("got grouped output %q, want %q", out, want)
+	}
+}
+
+func TestApplySupportsMultipleTargetsWithSeparateState(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    inline: |\n      Explore\nagents: {}\nskills: {}\n")
+
+	if _, err := runCommand(t, dir, []string{"agentspec", "apply", "--target", "opencode", "--target", "claude-code"}); err != nil {
+		t.Fatalf("run multi-target apply: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".agentspec", "state", "opencode.json")); err != nil {
+		t.Fatalf("stat opencode state: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agentspec", "state", "claude-code.json")); err != nil {
+		t.Fatalf("stat claude-code state: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".opencode", "commands", "explore.md")); err != nil {
+		t.Fatalf("stat opencode command: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "commands", "explore.md")); err != nil {
+		t.Fatalf("stat claude command: %v", err)
+	}
+}
+
+func TestApplyStopsOnFirstFailingTargetWithoutRollback(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceConfig(t, dir, "sections: {}\ncommands:\n  explore:\n    inline: |\n      Explore\nagents: {}\nskills: {}\n")
+	writeWorkspaceFile(t, filepath.Join(dir, ".claude", "commands", "explore.md"), "foreign\n")
+
+	_, err := runCommand(t, dir, []string{"agentspec", "apply", "--target", "opencode", "--target", "claude-code"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "foreign file") {
+		t.Fatalf("got error %q, want foreign file conflict", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".opencode", "commands", "explore.md")); err != nil {
+		t.Fatalf("stat preserved successful opencode output: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".claude", "commands", "explore.md"))
+	if err != nil {
+		t.Fatalf("read preserved claude file: %v", err)
+	}
+	if string(raw) != "foreign\n" {
+		t.Fatalf("got claude file %q, want %q", string(raw), "foreign\n")
+	}
+}
+
 func TestFreshWorkspaceSmokePath(t *testing.T) {
 	dir := t.TempDir()
 
@@ -81,7 +242,7 @@ func TestFreshWorkspaceSmokePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run plan: %v", err)
 	}
@@ -98,7 +259,7 @@ func TestFreshWorkspaceSmokePath(t *testing.T) {
 		t.Fatalf("expected no state after plan, got err %v", err)
 	}
 
-	_, err = runCommand(t, dir, []string{"agentspec", "apply", "--opencode"})
+	_, err = runCommand(t, dir, []string{"agentspec", "apply", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run apply: %v", err)
 	}
@@ -126,7 +287,7 @@ func TestFreshWorkspaceSmokePath(t *testing.T) {
 		t.Fatalf("stat agentspec state file: %v", err)
 	}
 
-	out, err = runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err = runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run second plan: %v", err)
 	}
@@ -142,7 +303,7 @@ func TestPlanOpencodeGroupsDefaultOutput(t *testing.T) {
 	writeWorkspaceFile(t, filepath.Join(dir, ".agentspec", "commands", "explore.md"), "Explore more\n")
 	writeWorkspaceConfig(t, dir, "sections: {}\ncommands:\n  build:\n    path: ./.agentspec/commands/build.md\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills: {}\n")
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run plan: %v", err)
 	}
@@ -165,7 +326,7 @@ func TestPlanOpencodeGroupsConflicts(t *testing.T) {
 	writeWorkspaceConfig(t, dir, "sections: {}\ncommands:\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills: {}\n")
 	writeWorkspaceFile(t, filepath.Join(dir, ".opencode", "commands", "explore.md"), "foreign\n")
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run plan: %v", err)
 	}
@@ -182,7 +343,7 @@ func TestPlanOpencodeVerboseShowsConflictReasons(t *testing.T) {
 	writeWorkspaceConfig(t, dir, "sections: {}\ncommands:\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills: {}\n")
 	writeWorkspaceFile(t, filepath.Join(dir, ".opencode", "commands", "explore.md"), "foreign\n")
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--verbose", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--verbose", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run verbose plan: %v", err)
 	}
@@ -204,7 +365,7 @@ func TestPlanOpencodeVerboseShowsExpandedOutput(t *testing.T) {
 	writeWorkspaceFile(t, filepath.Join(dir, ".agentspec", "commands", "explore.md"), "Explore more\n")
 	writeWorkspaceConfig(t, dir, "sections: {}\ncommands:\n  build:\n    path: ./.agentspec/commands/build.md\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills: {}\n")
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--verbose", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--verbose", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run verbose plan: %v", err)
 	}
@@ -230,14 +391,14 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read local smoke README: %v", err)
 	}
-	if !strings.Contains(string(readme), "go run ../../cmd/agentspec plan --opencode") {
+	if !strings.Contains(string(readme), "go run ../../cmd/agentspec plan --target opencode") {
 		t.Fatalf("expected plan smoke command in README, got %q", string(readme))
 	}
-	if !strings.Contains(string(readme), "go run ../../cmd/agentspec apply --opencode") {
+	if !strings.Contains(string(readme), "go run ../../cmd/agentspec apply --target opencode") {
 		t.Fatalf("expected apply smoke command in README, got %q", string(readme))
 	}
 
-	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err := runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run plan: %v", err)
 	}
@@ -245,14 +406,14 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 	want := compactGroup(
 		"create",
 		commandPath("explore"),
-		filepath.Join(".agents", "skills", "local-audit", "SKILL.md"),
+		filepath.Join(".opencode", "skills", "local-audit", "SKILL.md"),
 		"AGENTS.md#workspace-core",
 	)
 	if out != want {
 		t.Fatalf("got plan output %q, want %q", out, want)
 	}
 
-	if _, err := runCommand(t, dir, []string{"agentspec", "apply", "--opencode"}); err != nil {
+	if _, err := runCommand(t, dir, []string{"agentspec", "apply", "--target", "opencode"}); err != nil {
 		t.Fatalf("run apply: %v", err)
 	}
 
@@ -264,7 +425,7 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 		t.Fatalf("got command output %q", string(commandBody))
 	}
 
-	skillBody, err := os.ReadFile(filepath.Join(dir, ".agents", "skills", "local-audit", "SKILL.md"))
+	skillBody, err := os.ReadFile(filepath.Join(dir, ".opencode", "skills", "local-audit", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("read skill output: %v", err)
 	}
@@ -280,7 +441,7 @@ func TestCommittedLocalSmokeExampleRunsDeterministically(t *testing.T) {
 		t.Fatalf("expected section content in AGENTS.md, got %q", string(agentsBody))
 	}
 
-	out, err = runCommand(t, dir, []string{"agentspec", "plan", "--opencode"})
+	out, err = runCommand(t, dir, []string{"agentspec", "plan", "--target", "opencode"})
 	if err != nil {
 		t.Fatalf("run second plan: %v", err)
 	}
@@ -296,7 +457,7 @@ func managedWorkspace(t *testing.T) string {
 	writeWorkspaceFile(t, filepath.Join(dir, ".agentspec", "commands", "explore.md"), "Explore\n")
 	writeWorkspaceConfig(t, dir, "sections:\n  core:\n    inline: |\n      Core rules\ncommands:\n  explore:\n    path: ./.agentspec/commands/explore.md\nagents: {}\nskills: {}\n")
 
-	if _, err := runCommand(t, dir, []string{"agentspec", "apply", "--opencode"}); err != nil {
+	if _, err := runCommand(t, dir, []string{"agentspec", "apply", "--target", "opencode"}); err != nil {
 		t.Fatalf("apply baseline workspace: %v", err)
 	}
 

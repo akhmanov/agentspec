@@ -25,17 +25,16 @@ The repository briefing in `AGENTS.md` SHALL explain why `agentspec` exists, whi
 
 #### Scenario: Briefing explains file-based resources
 - **WHEN** an agent reads the resource model section in `AGENTS.md`
-- **THEN** it can understand that `commands` and `agents` render to target documents and that `skills` are directory-based bundles rather than single files
+- **THEN** it can understand that `commands` and `agents` render to target documents and that `skills` are target-native directory-based bundles rather than single files
 
 ### Requirement: AGENTS briefing explains sync semantics and ownership boundaries
 
-`AGENTS.md` SHALL describe `agentspec plan --opencode` and `agentspec apply --opencode` as managed desired-state sync operations with explicit ownership boundaries.
+`AGENTS.md` SHALL describe `agentspec plan --target <target>` and `agentspec apply --target <target>` as managed desired-state sync operations with explicit ownership boundaries.
 
 #### Scenario: Briefing explains plan behavior
 - **WHEN** an agent reads the sync model in `AGENTS.md`
-- **THEN** it sees that `plan --opencode` previews managed create, update, delete, and conflict results without writing workspace files
+- **THEN** it sees that `plan --target <target>` previews managed create, update, delete, and conflict results without writing workspace files
 
 #### Scenario: Briefing explains apply safety
 - **WHEN** an agent reads the sync model in `AGENTS.md`
-- **THEN** it sees that `apply --opencode` materializes managed state while refusing to silently overwrite foreign content
-
+- **THEN** it sees that `apply --target <target>` materializes managed state while refusing to silently overwrite foreign content

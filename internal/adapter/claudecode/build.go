@@ -1,4 +1,4 @@
-package opencode
+package claudecode
 
 import (
 	"path/filepath"
@@ -11,7 +11,7 @@ func Build(res *model.Resolved) *model.Desired {
 
 	for _, section := range res.Sections {
 		des.Sections = append(des.Sections, model.Section{
-			Path: "AGENTS.md",
+			Path: "CLAUDE.md",
 			ID:   section.ID,
 			Body: section.Body,
 		})
@@ -19,14 +19,14 @@ func Build(res *model.Resolved) *model.Desired {
 
 	for _, cmd := range res.Commands {
 		des.Files = append(des.Files, model.Output{
-			Path: filepath.Join(".opencode", "commands", cmd.ID+".md"),
+			Path: filepath.Join(".claude", "commands", cmd.ID+".md"),
 			Body: cmd.Body,
 		})
 	}
 
 	for _, agent := range res.Agents {
 		des.Files = append(des.Files, model.Output{
-			Path: filepath.Join(".opencode", "agents", agent.ID+".md"),
+			Path: filepath.Join(".claude", "agents", agent.ID+".md"),
 			Body: agent.Body,
 		})
 	}
@@ -34,7 +34,7 @@ func Build(res *model.Resolved) *model.Desired {
 	for _, skill := range res.Skills {
 		for _, file := range skill.Files {
 			des.Files = append(des.Files, model.Output{
-				Path: filepath.Join(".opencode", "skills", skill.ID, file.Path),
+				Path: filepath.Join(".claude", "skills", skill.ID, file.Path),
 				Body: file.Body,
 			})
 		}

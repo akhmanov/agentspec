@@ -166,6 +166,69 @@ func TestApplyWritesManagedFilesSectionsAndState(t *testing.T) {
 	}
 }
 
+func TestApplyTracksOpenCodeSkillStateUnderTargetNativeRoot(t *testing.T) {
+	dir := t.TempDir()
+	des := &model.Desired{
+		Files: []model.Output{{
+			Path: filepath.Join(".opencode", "skills", "debug", "SKILL.md"),
+			Body: "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n",
+		}},
+	}
+
+	if err := Apply(dir, "opencode", des); err != nil {
+		t.Fatalf("apply desired state: %v", err)
+	}
+
+	plan, err := Preview(dir, "opencode", des)
+	if err != nil {
+		t.Fatalf("preview desired state: %v", err)
+	}
+	if len(plan.Changes) != 0 || len(plan.Conflicts) != 0 {
+		t.Fatalf("got plan %#v, want no changes or conflicts", plan)
+	}
+}
+
+func TestPreviewMigratesLegacyOpenCodeSkillStateToTargetNativeRoot(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(".agents", "skills", "debug", "SKILL.md")
+	body := "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"
+
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills", "debug"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, legacyPath), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stateBody := `{"owner":"agentspec","version":3,"files":[{"path":"` + legacyPath + `","hash":"` + hashText(body) + `"}],"sections":[]}`
+	if err := os.WriteFile(filepath.Join(dir, ".agentspec", "state", "opencode.json"), []byte(stateBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	des := &model.Desired{
+		Files: []model.Output{{
+			Path: filepath.Join(".opencode", "skills", "debug", "SKILL.md"),
+			Body: body,
+		}},
+	}
+
+	plan, err := Preview(dir, "opencode", des)
+	if err != nil {
+		t.Fatalf("preview desired state: %v", err)
+	}
+	if len(plan.Changes) != 2 {
+		t.Fatalf("got %d changes, want %d", len(plan.Changes), 2)
+	}
+	if plan.Changes[0].Kind != Create || plan.Changes[0].Path != filepath.Join(".opencode", "skills", "debug", "SKILL.md") {
+		t.Fatalf("got first change %#v", plan.Changes[0])
+	}
+	if plan.Changes[1].Kind != Delete || plan.Changes[1].Path != legacyPath {
+		t.Fatalf("got second change %#v", plan.Changes[1])
+	}
+}
+
 func TestApplyRejectsForeignFileCollision(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".opencode", "commands")

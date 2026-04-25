@@ -26,7 +26,7 @@ The expected package shape for the first slice is:
 - `cmd/agentspec`
   - CLI transport only
   - process entrypoint
-  - command wiring
+  - command wiring and execution-context parsing
 - `internal/config`
   - parse and validate `agentspec.yaml`
 - `internal/resolve`
@@ -34,8 +34,12 @@ The expected package shape for the first slice is:
   - later `http`, `github`, `gitlab`
 - `internal/model`
   - normalized resolved resource shapes shared by adapters and sync
+- `internal/adapter`
+  - target selection and target-specific rendering dispatch
 - `internal/adapter/opencode`
-  - target-specific rendering only
+  - OpenCode rendering only
+- `internal/adapter/claudecode`
+  - Claude Code rendering only
 - `internal/sync`
   - desired-state apply, marker updates, and orphan cleanup
 - `internal/state`
@@ -45,7 +49,7 @@ Dependencies must point inward.
 
 - `cmd/agentspec` may depend on `internal/config`, `internal/resolve`, `internal/model`, adapter packages, and `internal/sync`.
 - `internal/config` must not depend on adapter or sync packages.
-- `internal/resolve` must not know target file layout.
+- `internal/resolve` must not know target file layout and should resolve local selectors relative to the loaded config file.
 - adapters must not parse raw config or resolve selectors.
 - `internal/sync` may operate on rendered desired outputs, but must not absorb target-specific resolve logic.
 

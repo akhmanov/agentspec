@@ -643,6 +643,78 @@ func TestRunGitCommandTimesOut(t *testing.T) {
 	}
 }
 
+func TestResolveUsesConfigDirectoryForRelativeLocalPaths(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "agentspec.yaml")
+
+	if err := os.MkdirAll(filepath.Join(root, "config", "resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config", "resources", "explore.md"), []byte("Explore\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config", "resources", "debug.md"), []byte("---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte("sections: {}\ncommands:\n  explore:\n    path: ./resources/explore.md\nagents: {}\nskills:\n  debug:\n    path: ./resources/debug.md\n")
+	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	res, err := Resolve(root, cfg)
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+
+	if got := res.Commands[0].Body; got != "Explore\n" {
+		t.Fatalf("got command %q, want %q", got, "Explore\n")
+	}
+	if got := res.Skills[0].Files[0].Body; got != "---\nname: debug\ndescription: Debug skill\n---\n\n# Debug\n" {
+		t.Fatalf("got skill body %q", got)
+	}
+}
+
+func TestResolvePreservesAbsoluteLocalPaths(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "agentspec.yaml")
+	absCommand := filepath.Join(root, "shared", "explore.md")
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(absCommand), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absCommand, []byte("Explore\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte("sections: {}\ncommands:\n  explore:\n    path: " + absCommand + "\nagents: {}\nskills: {}\n")
+	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	res, err := Resolve(root, cfg)
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+
+	if got := res.Commands[0].Body; got != "Explore\n" {
+		t.Fatalf("got command %q, want %q", got, "Explore\n")
+	}
+}
+
 func TestResolveLoadsInlinePathAndSingleFileSkill(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".agentspec", "commands"), 0o755); err != nil {

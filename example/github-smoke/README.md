@@ -12,9 +12,9 @@ Pinned sources in `agentspec.yaml`:
 Run the smoke from a temp copy or a fresh checkout of the repository so `apply` does not mutate the committed fixture in place. From this example directory:
 
 - `cd ../.. && cp -R . /tmp/agentspec-github-smoke-repo && cd /tmp/agentspec-github-smoke-repo/example/github-smoke`
-- `go run ../../cmd/agentspec plan --opencode`
-- `go run ../../cmd/agentspec plan --verbose --opencode`
-- `go run ../../cmd/agentspec apply --opencode`
+- `go run ../../cmd/agentspec plan --target opencode`
+- `go run ../../cmd/agentspec plan --verbose --target opencode`
+- `go run ../../cmd/agentspec apply --target opencode`
 
 Upstream drift expectations:
 

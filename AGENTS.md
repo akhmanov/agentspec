@@ -16,8 +16,8 @@ Maintaining agent workspace files by hand across repositories means repeatedly c
 
 1. Run `agentspec init` to create `agentspec.yaml`.
 2. Describe the desired workspace resources in `agentspec.yaml`.
-3. Run `agentspec plan --opencode` to preview managed changes.
-4. Run `agentspec apply --opencode` to materialize the workspace surface.
+3. Run `agentspec plan --target opencode` to preview managed changes.
+4. Run `agentspec apply --target opencode` to materialize the workspace surface.
 
 ## Resource Model
 
@@ -26,14 +26,14 @@ The top-level resource types describe what `agentspec` materializes into the wor
 - `sections`: managed instruction fragments inserted into `AGENTS.md`
 - `commands`: target command documents such as `.opencode/commands/<id>.md`
 - `agents`: target agent documents such as `.opencode/agents/<id>.md`
-- `skills`: directory-based skill bundles such as `.agents/skills/<id>/...`
+- `skills`: target-native skill bundles such as `.opencode/skills/<id>/...` or `.claude/skills/<id>/...`
 
 These are workspace resources, not runtime objects. `agentspec` materializes their files; it does not execute them.
 
 ## Sync Model
 
-- `agentspec plan --opencode` previews the managed create, update, delete, and conflict set without writing workspace files.
-- `agentspec apply --opencode` materializes the desired managed state, updates managed instruction sections, prunes orphaned `agentspec`-owned outputs, and refuses to silently overwrite foreign content.
+- `agentspec plan --target <target>` previews the managed create, update, delete, and conflict set without writing workspace files.
+- `agentspec apply --target <target>` materializes the desired managed state, updates managed instruction sections, prunes orphaned `agentspec`-owned outputs, and refuses to silently overwrite foreign content.
 
 Only the `agentspec`-owned surface is updated. Foreign content is left alone unless it is already inside an `agentspec`-managed boundary.
 
@@ -45,7 +45,7 @@ Keep the package direction clear:
 - `internal/config` loads and validates config.
 - `internal/resolve` resolves sources.
 - `internal/model` holds normalized resource shapes.
-- `internal/adapter/opencode` renders target-specific output.
+- `internal/adapter` selects target-specific renderers.
 - `internal/sync` previews and applies owned workspace changes.
 
 Do not move target-specific rendering into resolve logic or workflow behavior into the CLI.

@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	adapter "agentspec/internal/adapter/opencode"
+	"agentspec/internal/adapter"
 	"agentspec/internal/config"
 	"agentspec/internal/model"
 	"agentspec/internal/resolve"
@@ -15,6 +16,16 @@ import (
 )
 
 const defaultConfigPath = "agentspec.yaml"
+
+const (
+	envRootPath   = "AGENTSPEC_ROOT"
+	envConfigPath = "AGENTSPEC_CONFIG"
+)
+
+type executionContext struct {
+	root       string
+	configPath string
+}
 
 func main() {
 	if err := newCommand().Run(context.Background(), os.Args); err != nil {
@@ -27,19 +38,27 @@ func newCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "agentspec",
 		Usage: "materialize workspace resources from agentspec.yaml",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "root", Usage: "workspace root for config, outputs, and state"},
+			&cli.StringFlag{Name: "config", Usage: "path to agentspec config file"},
+		},
 		Commands: []*cli.Command{
 			{
 				Name:  "init",
 				Usage: "write a starter agentspec.yaml",
-				Action: func(context.Context, *cli.Command) error {
-					return config.WriteStarter(defaultConfigPath)
+				Action: func(_ context.Context, cmd *cli.Command) error {
+					ctx, err := selectedExecutionContext(cmd)
+					if err != nil {
+						return err
+					}
+					return config.WriteStarter(ctx.configPath)
 				},
 			},
 			{
 				Name:  "plan",
-				Usage: "preview workspace changes for a target",
+				Usage: "preview workspace changes for one or more targets",
 				Flags: []cli.Flag{
-					&cli.BoolFlag{Name: "opencode"},
+					&cli.StringSliceFlag{Name: "target", Usage: "target workspace surface to preview"},
 					&cli.BoolFlag{Name: "verbose"},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
@@ -48,9 +67,9 @@ func newCommand() *cli.Command {
 			},
 			{
 				Name:  "apply",
-				Usage: "apply workspace changes for a target",
+				Usage: "apply workspace changes for one or more targets",
 				Flags: []cli.Flag{
-					&cli.BoolFlag{Name: "opencode"},
+					&cli.StringSliceFlag{Name: "target", Usage: "target workspace surface to apply"},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					return runApply(cmd)
@@ -61,68 +80,131 @@ func newCommand() *cli.Command {
 }
 
 func runPlan(cmd *cli.Command) error {
-	target, err := selectedTarget(cmd)
+	ctx, err := selectedExecutionContext(cmd)
 	if err != nil {
 		return err
 	}
 
-	root, des, err := loadDesired(target)
+	targets, err := selectedTargets(cmd)
 	if err != nil {
 		return err
 	}
 
-	plan, err := awsync.Preview(root, target, des)
-	if err != nil {
-		return err
-	}
+	for i, target := range targets {
+		_, des, err := loadDesired(ctx, target)
+		if err != nil {
+			return err
+		}
 
-	printPlan(plan, cmd.Bool("verbose"))
+		plan, err := awsync.Preview(ctx.root, target, des)
+		if err != nil {
+			return err
+		}
+
+		if i > 0 {
+			fmt.Println()
+		}
+		if len(targets) > 1 {
+			fmt.Printf("%s:\n", target)
+		}
+		printPlan(plan, cmd.Bool("verbose"))
+	}
 	return nil
 }
 
 func runApply(cmd *cli.Command) error {
-	target, err := selectedTarget(cmd)
+	ctx, err := selectedExecutionContext(cmd)
 	if err != nil {
 		return err
 	}
 
-	root, des, err := loadDesired(target)
+	targets, err := selectedTargets(cmd)
 	if err != nil {
 		return err
 	}
 
-	return awsync.Apply(root, target, des)
+	for _, target := range targets {
+		_, des, err := loadDesired(ctx, target)
+		if err != nil {
+			return err
+		}
+		if err := awsync.Apply(ctx.root, target, des); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func selectedTarget(cmd *cli.Command) (string, error) {
-	if cmd.Bool("opencode") {
-		return "opencode", nil
+
+func selectedExecutionContext(cmd *cli.Command) (executionContext, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return executionContext{}, err
 	}
 
-	return "", fmt.Errorf("command requires a target flag")
+	root := cmd.String("root")
+	if root == "" {
+		root = os.Getenv(envRootPath)
+	}
+	if root == "" {
+		root = wd
+	} else {
+		root = cliPath(wd, root)
+	}
+
+	configPath := cmd.String("config")
+	if configPath == "" {
+		configPath = os.Getenv(envConfigPath)
+	}
+	if configPath == "" {
+		configPath = filepath.Join(root, defaultConfigPath)
+	} else {
+		configPath = cliPath(root, configPath)
+	}
+
+	return executionContext{root: root, configPath: configPath}, nil
 }
 
-func loadDesired(target string) (string, *model.Desired, error) {
-	root, err := os.Getwd()
+
+func selectedTargets(cmd *cli.Command) ([]string, error) {
+	targets := cmd.StringSlice("target")
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("command requires a target flag")
+	}
+	for _, target := range targets {
+		if !adapter.SupportedTarget(target) {
+			return nil, fmt.Errorf("unsupported target %q", target)
+		}
+	}
+	return targets, nil
+}
+
+func loadDesired(ctx executionContext, target string) (string, *model.Desired, error) {
+	cfg, err := config.Load(ctx.configPath)
 	if err != nil {
 		return "", nil, err
 	}
 
-	cfg, err := config.Load(defaultConfigPath)
+	res, err := resolve.Resolve(ctx.root, cfg)
 	if err != nil {
 		return "", nil, err
 	}
 
-	res, err := resolve.Resolve(root, cfg)
+	des, err := adapter.Build(target, res)
 	if err != nil {
 		return "", nil, err
 	}
 
-	if target != "opencode" {
-		return "", nil, fmt.Errorf("unsupported target %q", target)
+	return ctx.root, des, nil
+}
+
+func cliPath(base, raw string) string {
+	if filepath.IsAbs(raw) {
+		return raw
 	}
 
-	return root, adapter.Build(res), nil
+	return filepath.Join(base, raw)
 }
 
 func printPlan(plan *awsync.Plan, verbose bool) {

@@ -147,32 +147,41 @@ func Resolve(root string, cfg *config.Config) (*model.Resolved, error) {
 
 func resolveWithLoader(root string, cfg *config.Config, loader *remoteLoader) (*model.Resolved, error) {
 	res := &model.Resolved{}
+	configDir := localBaseDir(root, cfg)
 
-	sections, err := resolveDocs(root, cfg.Sections, cfg.SectionOrder, loader)
+	sections, err := resolveDocs(configDir, cfg.Sections, cfg.SectionOrder, loader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve sections: %w", err)
 	}
 	res.Sections = sections
 
-	commands, err := resolveDocs(root, cfg.Commands, cfg.CommandOrder, loader)
+	commands, err := resolveDocs(configDir, cfg.Commands, cfg.CommandOrder, loader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve commands: %w", err)
 	}
 	res.Commands = commands
 
-	agents, err := resolveDocs(root, cfg.Agents, cfg.AgentOrder, loader)
+	agents, err := resolveDocs(configDir, cfg.Agents, cfg.AgentOrder, loader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve agents: %w", err)
 	}
 	res.Agents = agents
 
-	skills, err := resolveSkills(root, cfg.Skills, cfg.SkillOrder, loader)
+	skills, err := resolveSkills(configDir, cfg.Skills, cfg.SkillOrder, loader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve skills: %w", err)
 	}
 	res.Skills = skills
 
 	return res, nil
+}
+
+func localBaseDir(root string, cfg *config.Config) string {
+	if cfg != nil && cfg.BaseDir != "" {
+		return cfg.BaseDir
+	}
+
+	return root
 }
 
 func resolveDocs(root string, items map[string]config.Source, order []string, loader *remoteLoader) ([]model.Document, error) {
