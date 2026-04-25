@@ -1,104 +1,103 @@
 ---
-description: Propose a bead-mapped OpenSpec change and generate apply-ready artifacts
+description: Propose a new change - create it and generate all artifacts in one step
 ---
 
-Propose a bead-mapped OpenSpec change and create the artifacts needed for implementation.
+Propose a new change - create the change and generate all artifacts in one step.
 
-When ready to implement, run `/opsx-apply`.
+I'll create a change with artifacts:
+- proposal.md (what & why)
+- design.md (how)
+- tasks.md (implementation steps)
+
+When ready to implement, run /opsx-apply
 
 ---
 
-**Input**: The argument after `/opsx-propose` is either:
-
-- a bead-prefixed change name like `wspace-q66-transition-workspace-lifecycle-to-openspec`
-- a bead id plus a short description
-- a plain description of what the user wants to build
+**Input**: The argument after `/opsx-propose` is the change name (kebab-case), OR a description of what the user wants to build.
 
 **Steps**
 
-1. **Recover or create the bead first**
+1. **If no input provided, ask what they want to build**
 
-   `beads` is the continuity layer in this repo.
+   Ask the user directly:
+   > "What change do you want to work on? Describe what you want to build or fix."
 
-   - If the user already gave a bead id, use it.
-      - Do not silently change ownership of an explicitly provided bead.
-      - If ownership, assignee, or intent is unclear, stop and ask before claiming it.
-   - Otherwise check active and ready work first:
-     ```bash
-     bd list --status=in_progress
-     bd ready
-     ```
-      - If you select a bead from `bd ready`, claim it before proceeding:
+   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
+
+   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
+
+2. **Create the change directory**
+   ```bash
+   openspec new change "<name>"
+   ```
+   This creates a scaffolded change at `openspec/changes/<name>/` with `.openspec.yaml`.
+
+3. **Get the artifact build order**
+   ```bash
+   openspec status --change "<name>" --json
+   ```
+   Parse the JSON to get:
+   - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
+   - `artifacts`: list of all artifacts with their status and dependencies
+
+4. **Create artifacts in sequence until apply-ready**
+
+   Track progress through the artifacts with the available session task-tracking tool.
+
+   Loop through artifacts in dependency order (artifacts with no pending dependencies first):
+
+   a. **For each artifact that is `ready` (dependencies satisfied)**:
+      - Get instructions:
         ```bash
-        bd update <bead-id> --claim
+        openspec instructions <artifact-id> --change "<name>" --json
         ```
-   - If no suitable bead exists, ask whether to create one with `bd q`.
-      - If creating a new bead, capture the id and claim it before proceeding:
-        ```bash
-        BEAD_ID=$(bd q "<title>")
-        bd update "$BEAD_ID" --claim
-        ```
+      - The instructions JSON includes:
+        - `context`: Project background (constraints for you - do NOT include in output)
+        - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
+        - `template`: The structure to use for your output file
+        - `instruction`: Schema-specific guidance for this artifact type
+        - `outputPath`: Where to write the artifact
+        - `dependencies`: Completed artifacts to read for context
+      - Read any completed dependency files for context
+      - Create the artifact file using `template` as the structure
+      - Apply `context` and `rules` as constraints - but do NOT copy them into the file
+      - Show brief progress: "Created <artifact-id>"
 
-   Do not create an OpenSpec change without a bead.
+   b. **Continue until all `applyRequires` artifacts are complete**
+      - After creating each artifact, re-run `openspec status --change "<name>" --json`
+      - Check if every artifact ID in `applyRequires` has `status: "done"` in the artifacts array
+      - Stop when all `applyRequires` artifacts are done
 
-2. **Derive the change name from the bead**
+   c. **If an artifact requires user input** (unclear context):
+      - Ask the user to clarify
+      - Then continue with creation
 
-   The change name MUST be prefixed with the bead id.
-
-   Example:
-
-   - bead `wspace-q66`
-   - change `wspace-q66-transition-workspace-lifecycle-to-openspec`
-
-   If the user provided only a description, derive a slug and prefix it with the bead id.
-
-3. **Check or set the bead mapping**
-
-   - Inspect bead metadata for `openspec.change`.
-   - If it exists and matches the derived change name, reuse it.
-   - If it exists and conflicts, stop and ask before proceeding.
-   - If it is missing, set it:
-     ```bash
-     bd update <bead-id> --set-metadata openspec.change=<change-name>
-     ```
-
-4. **Create the change directory if needed**
-
+5. **Show final status**
    ```bash
-   openspec new change "<change-name>"
+   openspec status --change "<name>"
    ```
 
-5. **Get the artifact build order**
+**Output**
 
-   ```bash
-   openspec status --change "<change-name>" --json
-   ```
+After completing all artifacts, summarize:
+- Change name and location
+- List of artifacts created with brief descriptions
+- What's ready: "All artifacts created! Ready for implementation."
+- Prompt: "Run `/opsx-apply` to start implementing."
 
-6. **Create artifacts in sequence until apply-ready**
+**Artifact Creation Guidelines**
 
-   For each artifact with `status: "ready"`:
-
-   - Get instructions:
-     ```bash
-     openspec instructions <artifact-id> --change "<change-name>" --json
-     ```
-   - Read dependency artifacts for context.
-   - Apply the returned `context`, `rules`, and `template`.
-   - Preserve the repo contract:
-     - include the bead traceability section requested by the schema
-     - treat `tasks.md` as an execution checklist, not the task manager
-
-   Continue until every artifact named in `applyRequires` is `done`.
-
-7. **Show final status**
-
-   ```bash
-   openspec status --change "<change-name>"
-   ```
+- Follow the `instruction` field from `openspec instructions` for each artifact type
+- The schema defines what each artifact should contain - follow it
+- Read dependency artifacts for context before creating new ones
+- Use `template` as the structure for your output file - fill in its sections
+- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
+  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
+  - These guide what you write, but should never appear in the output
 
 **Guardrails**
-
-- Never create or continue an unprefixed change in this repo.
-- Never let OpenSpec replace bead identity or status.
-- If the bead metadata and change directory disagree, stop and ask.
-- If the change already exists, ask whether to continue it instead of creating a duplicate.
+- Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
+- Always read dependency artifacts before creating a new one
+- If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
+- If a change with that name already exists, ask if user wants to continue it or create a new one
+- Verify each artifact file exists after writing before proceeding to next

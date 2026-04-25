@@ -39,7 +39,7 @@ Core user flow:
 The following are explicitly out of scope for v1:
 
 - owning or defining a lifecycle framework
-- embedding or wrapping `beads`
+- adding built-in task tracking or workflow-runtime behavior
 - adding `agentspec task`
 - requiring or generating external environment-manager configuration
 - using `npx skills`

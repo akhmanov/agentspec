@@ -1,39 +1,111 @@
 ---
-description: Create the next missing artifacts for an existing bead-mapped OpenSpec change
+description: Continue working on a change - create the next artifact (Experimental)
 ---
 
-Create the next missing artifacts for an existing bead-mapped OpenSpec change.
+Continue working on a change by creating the next artifact.
 
-**Input**: Optionally specify a bead id or a bead-prefixed change name.
+**Input**: Optionally specify a change name after `/opsx-continue` (e.g., `/opsx-continue add-auth`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
 **Steps**
 
-1. Select the bead first.
-    - Recover active work with `bd list --status=in_progress` if no bead was provided.
-    - If multiple active beads exist, ask the user which bead to continue before proceeding.
-    - If the input is a change name, infer the bead id from the prefix.
+1. **If no change name provided, prompt for selection**
 
-2. Resolve the mapped change from bead metadata `openspec.change`.
-   - If it is missing, stop and direct the user to `/opsx-propose`.
+   Run `openspec list --json` to get available changes sorted by most recently modified. Then ask the user to select which change to work on.
 
-3. Inspect artifact status.
+   Present the top 3-4 most recently modified changes as options, showing:
+   - Change name
+   - Schema (from `schema` field if present, otherwise "spec-driven")
+   - Status (e.g., "0/5 tasks", "complete", "no tasks")
+   - How recently it was modified (from `lastModified` field)
+
+   Mark the most recently modified change as "(Recommended)" since it's likely what the user wants to continue.
+
+   **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
+
+2. **Check current status**
    ```bash
-   openspec status --change "<change-name>" --json
+   openspec status --change "<name>" --json
+   ```
+   Parse the JSON to understand current state. The response includes:
+   - `schemaName`: The workflow schema being used (e.g., "spec-driven")
+   - `artifacts`: Array of artifacts with their status ("done", "ready", "blocked")
+   - `isComplete`: Boolean indicating if all artifacts are complete
+
+3. **Act based on status**:
+
+   ---
+
+   **If all artifacts are complete (`isComplete: true`)**:
+   - Congratulate the user
+   - Show final status including the schema used
+   - Suggest: "All artifacts created! You can now implement this change with `/opsx-apply` or archive it with `/opsx-archive`."
+   - STOP
+
+   ---
+
+   **If artifacts are ready to create** (status shows artifacts with `status: "ready"`):
+   - Pick the FIRST artifact with `status: "ready"` from the status output
+   - Get its instructions:
+     ```bash
+     openspec instructions <artifact-id> --change "<name>" --json
+     ```
+   - Parse the JSON. The key fields are:
+     - `context`: Project background (constraints for you - do NOT include in output)
+     - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
+     - `template`: The structure to use for your output file
+     - `instruction`: Schema-specific guidance
+     - `outputPath`: Where to write the artifact
+     - `dependencies`: Completed artifacts to read for context
+   - **Create the artifact file**:
+     - Read any completed dependency files for context
+     - Use `template` as the structure - fill in its sections
+     - Apply `context` and `rules` as constraints when writing - but do NOT copy them into the file
+     - Write to the output path specified in instructions
+   - Show what was created and what's now unlocked
+   - STOP after creating ONE artifact
+
+   ---
+
+   **If no artifacts are ready (all blocked)**:
+   - This shouldn't happen with a valid schema
+   - Show status and suggest checking for issues
+
+4. **After creating an artifact, show progress**
+   ```bash
+   openspec status --change "<name>"
    ```
 
-4. For each artifact with `status: "ready"`:
-   - fetch instructions with `openspec instructions <artifact-id> --change "<change-name>" --json`
-   - read completed dependency artifacts for context
-   - create the artifact using the returned template, context, and rules
-   - preserve bead traceability and the `OpenSpec + Beads` contract
+**Output**
 
-5. Re-run `openspec status --change "<change-name>" --json` after each artifact.
-   - Stop when all artifacts required for apply are `done`.
+After each invocation, show:
+- Which artifact was created
+- Schema workflow being used
+- Current progress (N/M complete)
+- What artifacts are now unlocked
+- Prompt: "Run `/opsx-continue` to create the next artifact"
 
-6. Show final status and tell the user whether `/opsx-apply` is now ready.
+**Artifact Creation Guidelines**
+
+The artifact types and their purpose depend on the schema. Use the `instruction` field from the instructions output to understand what to create.
+
+Common artifact patterns:
+
+**spec-driven schema** (proposal → specs → design → tasks):
+- **proposal.md**: Ask user about the change if not clear. Fill in Why, What Changes, Capabilities, Impact.
+  - The Capabilities section is critical - each capability listed will need a spec file.
+- **specs/<capability>/spec.md**: Create one spec per capability listed in the proposal's Capabilities section (use the capability name, not the change name).
+- **design.md**: Document technical decisions, architecture, and implementation approach.
+- **tasks.md**: Break down implementation into checkboxed tasks.
+
+For other schemas, follow the `instruction` field from the CLI output.
 
 **Guardrails**
-
-- Do not create a new change here; only continue an existing mapped one.
-- Do not let OpenSpec replace bead identity or status.
-- If the bead metadata and change directory disagree, stop and ask.
+- Create ONE artifact per invocation
+- Always read dependency artifacts before creating a new one
+- Never skip artifacts or create out of order
+- If context is unclear, ask the user before creating
+- Verify the artifact file exists after writing before marking progress
+- Use the schema's artifact sequence, don't assume specific artifact names
+- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
+  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
+  - These guide what you write, but should never appear in the output
